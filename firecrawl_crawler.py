@@ -12,8 +12,6 @@ API_KEY = os.getenv("FIRECRAWL_API_KEY")
 if not API_KEY:
     raise ValueError("Missing FIRECRAWL_API_KEY in .env")
 
-print(API_KEY)
-
 # page to crawl
 BASE_URL = "https://courses.cs.washington.edu/courses/cse121/26wi/"
 

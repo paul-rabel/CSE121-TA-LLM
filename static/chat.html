@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CSE 121 TA Chat</title>
+    <style>
+      :root {
+        --bg: #f4efe7;
+        --panel: #fffdf8;
+        --ink: #202020;
+        --muted: #676767;
+        --accent: #065f46;
+        --border: #d8cfc2;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: "Avenir Next", "Trebuchet MS", sans-serif;
+        color: var(--ink);
+        background: linear-gradient(160deg, #f4efe7 0%, #ece6db 100%);
+      }
+      .wrap {
+        max-width: 860px;
+        margin: 28px auto;
+        padding: 0 14px;
+      }
+      .title {
+        margin: 0 0 14px;
+        font-size: 32px;
+        letter-spacing: 0.2px;
+      }
+      .subtitle {
+        margin: 0 0 18px;
+        color: var(--muted);
+      }
+      .chat {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        overflow: hidden;
+        box-shadow: 0 14px 34px rgba(50, 45, 30, 0.08);
+      }
+      #messages {
+        height: 60vh;
+        min-height: 420px;
+        overflow-y: auto;
+        padding: 16px;
+      }
+      .msg {
+        margin: 10px 0;
+        max-width: 88%;
+        padding: 12px 14px;
+        border-radius: 10px;
+        line-height: 1.4;
+        white-space: pre-wrap;
+      }
+      .user {
+        background: #dbeafe;
+        margin-left: auto;
+      }
+      .assistant {
+        background: #e9f8f0;
+        margin-right: auto;
+      }
+      .sources {
+        margin-top: 8px;
+        font-size: 13px;
+      }
+      .sources a {
+        color: var(--accent);
+      }
+      form {
+        display: flex;
+        gap: 10px;
+        border-top: 1px solid var(--border);
+        padding: 12px;
+      }
+      input {
+        flex: 1;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 11px 12px;
+        font-size: 16px;
+      }
+      button {
+        border: 0;
+        border-radius: 10px;
+        padding: 0 18px;
+        background: var(--accent);
+        color: white;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.65;
+        cursor: not-allowed;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1 class="title">CSE 121 TA Chat</h1>
+      <p class="subtitle">Ask about schedule, assignments, resources, or policies from the indexed course pages.</p>
+      <div class="chat">
+        <div id="messages"></div>
+        <form id="chat-form">
+          <input id="message-input" placeholder="Example: When is Quiz 1 and what topics are covered?" />
+          <button id="send-btn" type="submit">Send</button>
+        </form>
+      </div>
+    </div>
+    <script>
+      const messagesEl = document.getElementById("messages");
+      const formEl = document.getElementById("chat-form");
+      const inputEl = document.getElementById("message-input");
+      const btnEl = document.getElementById("send-btn");
+
+      function addMessage(text, role, sources) {
+        const div = document.createElement("div");
+        div.className = "msg " + role;
+        div.textContent = text;
+        if (role === "assistant" && Array.isArray(sources) && sources.length > 0) {
+          const src = document.createElement("div");
+          src.className = "sources";
+          src.innerHTML = "<strong>Sources:</strong><br />" +
+            sources.slice(0, 3).map((s) => {
+              const safeUrl = s.url || "#";
+              const safeTitle = (s.title || "Untitled").replace(/</g, "&lt;");
+              return `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${safeTitle}</a>`;
+            }).join("<br />");
+          div.appendChild(src);
+        }
+        messagesEl.appendChild(div);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      }
+
+      async function sendMessage(message) {
+        btnEl.disabled = true;
+        try {
+          const res = await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message })
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            addMessage(data.error || "Request failed", "assistant");
+            return;
+          }
+          addMessage(data.answer || "(no answer)", "assistant", data.sources || []);
+        } catch (err) {
+          addMessage("Server connection failed.", "assistant");
+        } finally {
+          btnEl.disabled = false;
+        }
+      }
+
+      formEl.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const message = inputEl.value.trim();
+        if (!message) return;
+        addMessage(message, "user");
+        inputEl.value = "";
+        await sendMessage(message);
+      });
+
+      addMessage("Hello. Ask me anything about CSE 121 course info from the indexed pages.", "assistant");
+    </script>
+  </body>
+</html>

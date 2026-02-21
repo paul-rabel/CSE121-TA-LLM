@@ -3,158 +3,682 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>CSE 121 TA Chat</title>
+    <title>TAI Assistant</title>
     <style>
       :root {
-        --bg: #f4efe7;
-        --panel: #fffdf8;
-        --ink: #202020;
-        --muted: #676767;
-        --accent: #065f46;
-        --border: #d8cfc2;
+        --bg-1: #020205;
+        --bg-2: #050812;
+        --bg-3: #090f1f;
+        --panel: rgba(11, 15, 31, 0.76);
+        --panel-border: rgba(144, 171, 255, 0.2);
+        --text-main: #edf1ff;
+        --text-muted: #9ca9c9;
+        --orb-core-a: #ffd8ad;
+        --orb-core-b: #ff946f;
+        --orb-ring: rgba(255, 184, 121, 0.52);
+        --ring-1-bright: rgba(255, 206, 150, 0.34);
+        --ring-1-mid: rgba(255, 187, 127, 0.2);
+        --ring-1-fade: rgba(255, 164, 107, 0.04);
+        --ring-2-bright: rgba(255, 196, 139, 0.27);
+        --ring-2-mid: rgba(255, 176, 117, 0.16);
+        --ring-2-fade: rgba(255, 154, 96, 0.035);
+        --ring-3-bright: rgba(255, 186, 128, 0.22);
+        --ring-3-mid: rgba(255, 168, 109, 0.13);
+        --ring-3-fade: rgba(255, 147, 91, 0.026);
+        --ring-4-bright: rgba(255, 177, 118, 0.17);
+        --ring-4-mid: rgba(255, 158, 101, 0.1);
+        --ring-4-fade: rgba(255, 140, 84, 0.02);
+        --user-msg: linear-gradient(145deg, rgba(86, 120, 230, 0.28), rgba(28, 45, 107, 0.42));
+        --assistant-msg: linear-gradient(145deg, rgba(21, 28, 53, 0.82), rgba(12, 17, 35, 0.9));
+        --input-bg: rgba(7, 10, 23, 0.92);
+        --button-a: #f0a86f;
+        --button-b: #c46c4e;
       }
+
       * {
         box-sizing: border-box;
       }
+
+      html,
       body {
         margin: 0;
-        font-family: "Avenir Next", "Trebuchet MS", sans-serif;
-        color: var(--ink);
-        background: linear-gradient(160deg, #f4efe7 0%, #ece6db 100%);
+        min-height: 100%;
       }
-      .wrap {
-        max-width: 860px;
-        margin: 28px auto;
-        padding: 0 14px;
-      }
-      .title {
-        margin: 0 0 14px;
-        font-size: 32px;
-        letter-spacing: 0.2px;
-      }
-      .subtitle {
-        margin: 0 0 18px;
-        color: var(--muted);
-      }
-      .chat {
-        background: var(--panel);
-        border: 1px solid var(--border);
-        border-radius: 14px;
+
+      body {
+        font-family: "Space Grotesk", "Avenir Next Condensed", "Trebuchet MS", sans-serif;
+        color: var(--text-main);
+        background:
+          radial-gradient(980px 620px at 50% 28%, rgba(34, 51, 109, 0.3), transparent 70%),
+          radial-gradient(760px 500px at 8% 10%, rgba(40, 64, 145, 0.18), transparent 76%),
+          linear-gradient(170deg, var(--bg-1) 0%, var(--bg-2) 60%, var(--bg-3) 100%);
         overflow: hidden;
-        box-shadow: 0 14px 34px rgba(50, 45, 30, 0.08);
       }
-      #messages {
-        height: 60vh;
-        min-height: 420px;
-        overflow-y: auto;
-        padding: 16px;
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        background-image:
+          linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
+        background-size: 42px 42px;
+        mask-image: radial-gradient(circle at center, black 24%, transparent 88%);
+        pointer-events: none;
+        opacity: 0.36;
       }
-      .msg {
-        margin: 10px 0;
-        max-width: 88%;
-        padding: 12px 14px;
-        border-radius: 10px;
-        line-height: 1.4;
-        white-space: pre-wrap;
+
+      .stage {
+        min-height: 100vh;
+        display: grid;
+        grid-template-rows: 1fr auto;
+        gap: 12px;
+        padding: 18px clamp(14px, 3vw, 28px) 18px;
       }
-      .user {
-        background: #dbeafe;
-        margin-left: auto;
+
+      .centerpiece {
+        position: relative;
+        display: grid;
+        place-items: center;
+        overflow: hidden;
       }
-      .assistant {
-        background: #e9f8f0;
-        margin-right: auto;
+
+      .orb-wrap {
+        position: relative;
+        width: min(52vw, 300px);
+        aspect-ratio: 1;
+        display: grid;
+        place-items: center;
+        isolation: isolate;
       }
-      .sources {
-        margin-top: 8px;
-        font-size: 13px;
+
+      .core {
+        width: 44%;
+        aspect-ratio: 1;
+        position: relative;
+        z-index: 8;
+        overflow: hidden;
+        border-radius: 54% 46% 52% 48% / 47% 53% 49% 51%;
+        background:
+          radial-gradient(circle at 29% 24%, rgba(255, 229, 193, 0.92) 0%, rgba(255, 204, 154, 0.82) 26%, rgba(255, 162, 116, 0.72) 58%, rgba(238, 114, 84, 0.78) 100%),
+          radial-gradient(circle at 74% 76%, rgba(255, 194, 154, 0.26), transparent 64%);
+        box-shadow:
+          0 0 26px rgba(255, 179, 114, 0.28),
+          0 0 76px rgba(255, 141, 88, 0.17),
+          inset 0 -16px 26px rgba(102, 46, 30, 0.38),
+          inset 0 12px 20px rgba(255, 229, 189, 0.16);
+        filter: saturate(1.02) brightness(0.92);
+        isolation: isolate;
+        transform: translateZ(0);
+        backface-visibility: hidden;
+        will-change: border-radius, filter, transform;
+        animation:
+          corePulse 24s cubic-bezier(0.55, 0.08, 0.24, 0.96) infinite,
+          coreShape 28s cubic-bezier(0.58, 0.04, 0.24, 0.98) infinite,
+          coreLuma 26s cubic-bezier(0.45, 0.08, 0.24, 0.96) infinite;
       }
-      .sources a {
-        color: var(--accent);
+
+      .core::before,
+      .core::after {
+        content: "";
+        position: absolute;
+        inset: -14%;
+        border-radius: inherit;
+        pointer-events: none;
+        will-change: transform, border-radius, opacity, filter;
       }
-      form {
-        display: flex;
-        gap: 10px;
-        border-top: 1px solid var(--border);
-        padding: 12px;
+
+      .core::before {
+        background:
+          radial-gradient(circle at 22% 26%, rgba(255, 240, 213, 0.52), transparent 40%),
+          radial-gradient(circle at 74% 72%, rgba(255, 136, 98, 0.36), transparent 56%),
+          radial-gradient(circle at 46% 50%, rgba(255, 186, 142, 0.16), transparent 68%);
+        mix-blend-mode: normal;
+        opacity: 0.58;
+        filter: blur(11px) saturate(1.04);
+        animation: coreFlowA 15s linear infinite;
       }
-      input {
-        flex: 1;
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        padding: 11px 12px;
-        font-size: 16px;
+
+      .core::after {
+        background:
+          radial-gradient(circle at 66% 28%, rgba(255, 219, 180, 0.34), transparent 44%),
+          radial-gradient(circle at 30% 80%, rgba(255, 120, 86, 0.28), transparent 58%);
+        mix-blend-mode: normal;
+        opacity: 0.52;
+        filter: blur(14px) saturate(1.03);
+        animation: coreFlowB 19s linear infinite;
       }
-      button {
+
+      .ring {
+        position: absolute;
+        width: var(--ring-size, 62%);
+        aspect-ratio: 1;
+        z-index: var(--ring-depth, 1);
+        border-radius: 50%;
         border: 0;
-        border-radius: 10px;
-        padding: 0 18px;
-        background: var(--accent);
-        color: white;
-        font-weight: 600;
-        cursor: pointer;
+        background:
+          radial-gradient(circle at 32% 28%, rgba(255, 247, 228, 0.12), transparent 45%),
+          radial-gradient(circle at 50% 50%, var(--ring-bright) 0%, var(--ring-mid) 58%, var(--ring-fade) 100%);
+        box-shadow:
+          0 0 28px rgba(255, 174, 108, 0.12),
+          inset 0 0 22px rgba(255, 170, 113, 0.08);
+        opacity: var(--ring-alpha, 0.28);
+        transform: scale(0.94, 1.03);
+        transform-origin: 50% 50%;
+        will-change: transform, border-radius, opacity;
+        animation:
+          waveBreath var(--ring-breath, 26s) cubic-bezier(0.56, 0.08, 0.24, 0.96) infinite,
+          waveMorph var(--ring-morph, 24s) cubic-bezier(0.54, 0.06, 0.24, 0.98) infinite,
+          waveDrift var(--ring-drift, 32s) linear infinite;
       }
-      button:disabled {
-        opacity: 0.65;
+
+      .ring.r1 {
+        --ring-size: 62%;
+        --ring-depth: 6;
+        --ring-bright: var(--ring-1-bright);
+        --ring-mid: var(--ring-1-mid);
+        --ring-fade: var(--ring-1-fade);
+        --ring-alpha: 0.42;
+        --ring-breath: 22s;
+        --ring-morph: 20s;
+        --ring-drift: 27s;
+        animation-delay: -2s, -0.6s, -4s;
+      }
+
+      .ring.r2 {
+        --ring-size: 72%;
+        --ring-depth: 5;
+        --ring-bright: var(--ring-2-bright);
+        --ring-mid: var(--ring-2-mid);
+        --ring-fade: var(--ring-2-fade);
+        --ring-alpha: 0.33;
+        --ring-breath: 25s;
+        --ring-morph: 23s;
+        --ring-drift: 31s;
+        animation-delay: -9s, -6s, -12s;
+      }
+
+      .ring.r3 {
+        --ring-size: 82%;
+        --ring-depth: 4;
+        --ring-bright: var(--ring-3-bright);
+        --ring-mid: var(--ring-3-mid);
+        --ring-fade: var(--ring-3-fade);
+        --ring-alpha: 0.27;
+        --ring-breath: 28s;
+        --ring-morph: 26s;
+        --ring-drift: 35s;
+        animation-delay: -15s, -11s, -18s;
+      }
+
+      .ring.r4 {
+        --ring-size: 92%;
+        --ring-depth: 3;
+        --ring-bright: var(--ring-4-bright);
+        --ring-mid: var(--ring-4-mid);
+        --ring-fade: var(--ring-4-fade);
+        --ring-alpha: 0.22;
+        --ring-breath: 32s;
+        --ring-morph: 30s;
+        --ring-drift: 39s;
+        animation-delay: -20s, -15s, -23s;
+      }
+
+      .status {
+        position: absolute;
+        z-index: 10;
+        bottom: 10%;
+        font-size: clamp(13px, 1.7vw, 15px);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #f1dac0;
+        text-align: center;
+        text-shadow: 0 0 18px rgba(233, 168, 118, 0.52);
+      }
+
+      .console {
+        width: min(980px, 100%);
+        margin: 0 auto;
+        background: var(--panel);
+        border: 1px solid var(--panel-border);
+        border-radius: 18px;
+        backdrop-filter: blur(12px);
+        box-shadow: 0 16px 42px rgba(3, 7, 20, 0.56);
+        overflow: hidden;
+      }
+
+      #messages {
+        height: min(34vh, 340px);
+        overflow-y: auto;
+        padding: 14px;
+        scrollbar-color: rgba(149, 177, 255, 0.42) transparent;
+      }
+
+      .msg {
+        margin: 0 0 12px;
+        max-width: 84%;
+        border-radius: 14px;
+        padding: 11px 12px;
+        line-height: 1.45;
+        white-space: pre-wrap;
+        border: 1px solid rgba(142, 168, 249, 0.24);
+      }
+
+      .msg.user {
+        margin-left: auto;
+        background: var(--user-msg);
+      }
+
+      .msg.assistant {
+        margin-right: auto;
+        background: var(--assistant-msg);
+      }
+
+      .msg-meta {
+        margin-top: 8px;
+        font-size: 12px;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+
+      .sources {
+        margin-top: 9px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+      }
+
+      .source-pill {
+        display: inline-flex;
+        align-items: center;
+        max-width: 100%;
+        text-decoration: none;
+        color: #d9e5ff;
+        font-size: 12px;
+        padding: 5px 9px;
+        border-radius: 999px;
+        border: 1px solid rgba(146, 173, 255, 0.34);
+        background: rgba(35, 50, 107, 0.56);
+      }
+
+      form {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 10px;
+        padding: 11px;
+        border-top: 1px solid rgba(146, 173, 255, 0.2);
+      }
+
+      #message-input {
+        width: 100%;
+        border: 1px solid rgba(138, 167, 255, 0.34);
+        border-radius: 11px;
+        background: var(--input-bg);
+        color: var(--text-main);
+        font-size: 15px;
+        padding: 11px 12px;
+        outline: none;
+      }
+
+      #message-input::placeholder {
+        color: #8d9ec9;
+      }
+
+      #send-btn {
+        border: 0;
+        border-radius: 11px;
+        padding: 0 16px;
+        color: #ecf2ff;
+        font-weight: 700;
+        cursor: pointer;
+        background: linear-gradient(145deg, var(--button-a), var(--button-b));
+        box-shadow: 0 8px 22px rgba(66, 103, 238, 0.44);
+      }
+
+      #send-btn:disabled {
+        opacity: 0.6;
         cursor: not-allowed;
+      }
+
+      @keyframes corePulse {
+        0%,
+        100% {
+          transform: scale(0.96, 1.04) rotate(-1deg);
+        }
+        20% {
+          transform: scale(1.03, 0.97) rotate(1.3deg);
+        }
+        42% {
+          transform: scale(1.09, 0.92) rotate(2.1deg);
+        }
+        62% {
+          transform: scale(0.94, 1.09) rotate(-2.2deg);
+        }
+        82% {
+          transform: scale(1.02, 0.99) rotate(0.8deg);
+        }
+      }
+
+      @keyframes coreShape {
+        0%,
+        100% {
+          border-radius: 54% 46% 52% 48% / 47% 53% 49% 51%;
+        }
+        17% {
+          border-radius: 62% 38% 54% 46% / 42% 58% 44% 56%;
+        }
+        33% {
+          border-radius: 45% 55% 49% 51% / 60% 40% 58% 42%;
+        }
+        50% {
+          border-radius: 57% 43% 40% 60% / 49% 51% 63% 37%;
+        }
+        67% {
+          border-radius: 38% 62% 55% 45% / 53% 47% 44% 56%;
+        }
+        84% {
+          border-radius: 59% 41% 52% 48% / 45% 55% 50% 50%;
+        }
+      }
+
+      @keyframes coreLuma {
+        0%,
+        100% {
+          filter: brightness(0.88) saturate(0.95) contrast(1);
+        }
+        24% {
+          filter: brightness(0.95) saturate(1) contrast(1.01);
+        }
+        49% {
+          filter: brightness(1.03) saturate(1.03) contrast(1.03);
+        }
+        73% {
+          filter: brightness(0.94) saturate(0.99) contrast(1.01);
+        }
+      }
+
+      @keyframes coreFlowA {
+        0%,
+        100% {
+          transform: translate(-2.5%, 1.4%) scale(1.02, 0.94) rotate(-4deg);
+          border-radius: 62% 38% 48% 52% / 46% 54% 39% 61%;
+          opacity: 0.54;
+        }
+        22% {
+          transform: translate(3.6%, -2.1%) scale(1.11, 0.88) rotate(5deg);
+          border-radius: 44% 56% 63% 37% / 58% 42% 62% 38%;
+          opacity: 0.7;
+        }
+        47% {
+          transform: translate(-1.8%, 3.2%) scale(0.86, 1.12) rotate(-6deg);
+          border-radius: 57% 43% 41% 59% / 35% 65% 43% 57%;
+          opacity: 0.5;
+        }
+        73% {
+          transform: translate(2.3%, -0.5%) scale(1.07, 0.91) rotate(4deg);
+          border-radius: 39% 61% 53% 47% / 54% 46% 66% 34%;
+          opacity: 0.66;
+        }
+        90% {
+          transform: translate(-0.7%, -2%) scale(0.95, 1.05) rotate(-3deg);
+          border-radius: 55% 45% 57% 43% / 60% 40% 51% 49%;
+          opacity: 0.58;
+        }
+      }
+
+      @keyframes coreFlowB {
+        0%,
+        100% {
+          transform: translate(1.7%, -1.2%) scale(0.92, 1.06) rotate(3deg);
+          border-radius: 43% 57% 55% 45% / 64% 36% 58% 42%;
+          opacity: 0.46;
+        }
+        25% {
+          transform: translate(-2.9%, 2.1%) scale(1.13, 0.87) rotate(-5deg);
+          border-radius: 63% 37% 39% 61% / 43% 57% 35% 65%;
+          opacity: 0.56;
+        }
+        48% {
+          transform: translate(2.4%, -3.1%) scale(0.85, 1.14) rotate(6deg);
+          border-radius: 52% 48% 61% 39% / 59% 41% 66% 34%;
+          opacity: 0.42;
+        }
+        72% {
+          transform: translate(-1.9%, -0.9%) scale(1.08, 0.92) rotate(-4deg);
+          border-radius: 37% 63% 56% 44% / 48% 52% 40% 60%;
+          opacity: 0.6;
+        }
+        90% {
+          transform: translate(0.8%, 2.2%) scale(0.97, 1.03) rotate(2deg);
+          border-radius: 58% 42% 46% 54% / 35% 65% 47% 53%;
+          opacity: 0.5;
+        }
+      }
+
+      @keyframes waveBreath {
+        0% {
+          transform: scale(0.9, 1.08) rotate(-1deg);
+          opacity: calc(var(--ring-alpha) - 0.03);
+        }
+        20% {
+          transform: scale(1.01, 0.95) rotate(1deg);
+          opacity: calc(var(--ring-alpha) + 0.02);
+        }
+        40% {
+          transform: scale(1.1, 0.92) rotate(2deg);
+          opacity: calc(var(--ring-alpha) + 0.04);
+        }
+        60% {
+          transform: scale(0.95, 1.12) rotate(-2deg);
+          opacity: calc(var(--ring-alpha) + 0.01);
+        }
+        80% {
+          transform: scale(1.04, 0.96) rotate(1deg);
+          opacity: calc(var(--ring-alpha) + 0.03);
+        }
+        92% {
+          transform: scale(0.97, 1.03) rotate(-0.5deg);
+          opacity: calc(var(--ring-alpha) - 0.01);
+        }
+        100% {
+          transform: scale(0.9, 1.08) rotate(-1deg);
+          opacity: calc(var(--ring-alpha) - 0.03);
+        }
+      }
+
+      @keyframes waveMorph {
+        0%,
+        100% {
+          border-radius: 50%;
+          filter: blur(0.35px);
+        }
+        16% {
+          border-radius: 61% 39% 53% 47% / 44% 56% 40% 60%;
+          filter: blur(0.6px);
+        }
+        33% {
+          border-radius: 42% 58% 47% 53% / 62% 38% 58% 42%;
+          filter: blur(0.86px);
+        }
+        50% {
+          border-radius: 56% 44% 39% 61% / 50% 50% 65% 35%;
+          filter: blur(0.98px);
+        }
+        66% {
+          border-radius: 38% 62% 56% 44% / 45% 55% 42% 58%;
+          filter: blur(0.88px);
+        }
+        84% {
+          border-radius: 55% 45% 60% 40% / 58% 42% 53% 47%;
+          filter: blur(0.64px);
+        }
+      }
+
+      @keyframes waveDrift {
+        0%,
+        100% {
+          translate: 0 0;
+          rotate: 0deg;
+        }
+        25% {
+          translate: 1.8% -1.2%;
+          rotate: 6deg;
+        }
+        50% {
+          translate: -1.6% 1.5%;
+          rotate: -5deg;
+        }
+        75% {
+          translate: 2.1% 0.8%;
+          rotate: 4deg;
+        }
+      }
+
+      @media (max-width: 740px) {
+        .stage {
+          grid-template-rows: auto 1fr;
+          gap: 8px;
+          padding: 12px 10px 12px;
+        }
+
+        .centerpiece {
+          min-height: 31vh;
+        }
+
+        .orb-wrap {
+          width: min(68vw, 250px);
+        }
+
+        #messages {
+          height: 43vh;
+        }
+
+        .msg {
+          max-width: 93%;
+          font-size: 14px;
+        }
+
+        form {
+          grid-template-columns: 1fr;
+        }
+
+        #send-btn {
+          height: 42px;
+        }
       }
     </style>
   </head>
   <body>
-    <div class="wrap">
-      <h1 class="title">CSE 121 TA Chat</h1>
-      <p class="subtitle">Ask about schedule, assignments, resources, or policies from the indexed course pages.</p>
-      <div class="chat">
+    <div class="stage">
+      <section class="centerpiece" aria-label="TA Visualizer">
+        <div class="orb-wrap" id="orb-wrap">
+          <div class="ring r1"></div>
+          <div class="ring r2"></div>
+          <div class="ring r3"></div>
+          <div class="ring r4"></div>
+          <div class="core"></div>
+          <div class="status" id="status-text">Ready</div>
+        </div>
+      </section>
+
+      <section class="console" aria-label="Chat Console">
         <div id="messages"></div>
         <form id="chat-form">
-          <input id="message-input" placeholder="Example: When is Quiz 1 and what topics are covered?" />
-          <button id="send-btn" type="submit">Send</button>
+          <input id="message-input" placeholder="Ask schedule, assignments, policy, and section questions" autocomplete="off" />
+          <button id="send-btn" type="submit">Transmit</button>
         </form>
-      </div>
+      </section>
     </div>
+
     <script>
       const messagesEl = document.getElementById("messages");
       const formEl = document.getElementById("chat-form");
       const inputEl = document.getElementById("message-input");
       const btnEl = document.getElementById("send-btn");
+      const statusEl = document.getElementById("status-text");
 
-      function addMessage(text, role, sources) {
-        const div = document.createElement("div");
-        div.className = "msg " + role;
-        div.textContent = text;
-        if (role === "assistant" && Array.isArray(sources) && sources.length > 0) {
-          const src = document.createElement("div");
-          src.className = "sources";
-          src.innerHTML = "<strong>Sources:</strong><br />" +
-            sources.slice(0, 3).map((s) => {
-              const safeUrl = s.url || "#";
-              const safeTitle = (s.title || "Untitled").replace(/</g, "&lt;");
-              return `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${safeTitle}</a>`;
-            }).join("<br />");
-          div.appendChild(src);
+      function setThinking(value) {
+        if (value) {
+          statusEl.textContent = "Thinking";
+        } else if (statusEl.textContent === "Thinking") {
+          statusEl.textContent = "Ready";
         }
-        messagesEl.appendChild(div);
+      }
+
+      function addMessage(text, role, sources, mode, confidence) {
+        const msg = document.createElement("article");
+        msg.className = "msg " + role;
+
+        const body = document.createElement("div");
+        body.textContent = text;
+        msg.appendChild(body);
+
+        if (role === "assistant") {
+          if (mode) {
+            const meta = document.createElement("div");
+            meta.className = "msg-meta";
+            const conf = typeof confidence === "number" ? ` | confidence ${confidence.toFixed(2)}` : "";
+            meta.textContent = `mode ${mode}${conf}`;
+            msg.appendChild(meta);
+          }
+
+          if (Array.isArray(sources) && sources.length > 0) {
+            const src = document.createElement("div");
+            src.className = "sources";
+
+            sources.slice(0, 3).forEach((s) => {
+              const a = document.createElement("a");
+              a.className = "source-pill";
+              a.href = s.url || "#";
+              a.target = "_blank";
+              a.rel = "noopener noreferrer";
+              const rank = s.rank ? `S${s.rank}` : "S";
+              const title = s.title || "Untitled";
+              a.textContent = `${rank} ${title}`;
+              src.appendChild(a);
+            });
+
+            msg.appendChild(src);
+          }
+        }
+
+        messagesEl.appendChild(msg);
         messagesEl.scrollTop = messagesEl.scrollHeight;
       }
 
       async function sendMessage(message) {
         btnEl.disabled = true;
+        setThinking(true);
+
         try {
           const res = await fetch("/api/chat", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ message })
           });
+
           const data = await res.json();
           if (!res.ok) {
-            addMessage(data.error || "Request failed", "assistant");
+            addMessage(data.error || "Request failed", "assistant", [], "error");
+            statusEl.textContent = "Request failed";
             return;
           }
-          addMessage(data.answer || "(no answer)", "assistant", data.sources || []);
+
+          addMessage(
+            data.answer || "(no answer)",
+            "assistant",
+            data.sources || [],
+            data.answer_mode || "unknown",
+            typeof data.confidence === "number" ? data.confidence : null
+          );
+          statusEl.textContent = data.answer_mode === "no_answer" ? "No answer found" : "Answer ready";
         } catch (err) {
-          addMessage("Server connection failed.", "assistant");
+          addMessage("Server connection failed.", "assistant", [], "error");
+          statusEl.textContent = "Offline";
         } finally {
           btnEl.disabled = false;
+          setThinking(false);
         }
       }
 
@@ -167,7 +691,12 @@
         await sendMessage(message);
       });
 
-      addMessage("Hello. Ask me anything about CSE 121 course info from the indexed pages.", "assistant");
+      addMessage(
+        "TAI Assistant online. Ask me anything about CSE 121 and I will search the indexed course sources.",
+        "assistant",
+        [],
+        "ready"
+      );
     </script>
   </body>
 </html>

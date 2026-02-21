@@ -9,8 +9,8 @@ It includes:
 
 ## Static Demo on GitHub Pages (No Backend)
 
-This repo includes a backend-free demo at:
-- `docs/index.html`
+This repo includes a backend-free demo:
+- `https://<username>.github.io/<repo>/`
 
 What it does:
 - Runs fully in the browser.

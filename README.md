@@ -19,21 +19,11 @@ What it does:
 
 ### Run demo locally
 ```bash
-cd /Users/paulrabel/cse121-ta-llm
+cd <repo-root>
 python3 -m http.server 8080
 ```
 Open:
 - `http://127.0.0.1:8080/docs/`
-
-### Deploy demo to GitHub Pages
-1. Push the repo to GitHub.
-2. In GitHub: `Settings -> Pages`.
-3. Under "Build and deployment", set:
-   - Source: `Deploy from a branch`
-   - Branch: `main`
-   - Folder: `/docs`
-4. Save, then wait for deployment.
-5. Open your Pages URL.
 
 ## Quick Start (Recommended, No Ollama Required)
 

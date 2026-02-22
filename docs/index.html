@@ -1039,6 +1039,13 @@
       };
 
       const DEMO_KB = [
+		{
+          test: (q) => /\br4\b/.test(q) && /(what|who|where|)/.test(q),
+          answer:
+            "R4 is short for \"Resubmission 4.\" It is an opportunity to resubmit C1, P1, C2. R4 is due 11:59pm PT.",
+          mode: "demo_deterministic",
+          sources: [{ ...DEMO_SOURCES.home }]
+        },
         {
           test: (q) => /\br4\b/.test(q) && /(due|eligible|assign|submit|resub)/.test(q),
           answer:

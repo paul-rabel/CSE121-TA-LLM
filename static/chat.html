@@ -9,8 +9,13 @@
         --bg-1: #020205;
         --bg-2: #050812;
         --bg-3: #090f1f;
+        --bg-accent-1: rgba(34, 51, 109, 0.3);
+        --bg-accent-2: rgba(40, 64, 145, 0.18);
+        --grid-line: rgba(255, 255, 255, 0.015);
+        --grid-opacity: 0.36;
         --panel: rgba(11, 15, 31, 0.76);
         --panel-border: rgba(144, 171, 255, 0.2);
+        --console-shadow: 0 16px 42px rgba(3, 7, 20, 0.56);
         --text-main: #edf1ff;
         --text-muted: #9ca9c9;
         --orb-core-a: #ffd8ad;
@@ -30,9 +35,84 @@
         --ring-4-fade: rgba(255, 140, 84, 0.02);
         --user-msg: linear-gradient(145deg, rgba(86, 120, 230, 0.28), rgba(28, 45, 107, 0.42));
         --assistant-msg: linear-gradient(145deg, rgba(21, 28, 53, 0.82), rgba(12, 17, 35, 0.9));
+        --msg-border: rgba(142, 168, 249, 0.24);
         --input-bg: rgba(7, 10, 23, 0.92);
+        --input-border: rgba(138, 167, 255, 0.34);
+        --placeholder: #8d9ec9;
+        --source-text: #d9e5ff;
+        --source-border: rgba(146, 173, 255, 0.34);
+        --source-bg: rgba(35, 50, 107, 0.56);
+        --form-border: rgba(146, 173, 255, 0.2);
+        --status-color: #f1dac0;
+        --status-shadow: rgba(233, 168, 118, 0.52);
         --button-a: #f0a86f;
         --button-b: #c46c4e;
+        --button-text: #ecf2ff;
+        --button-shadow: 0 8px 22px rgba(66, 103, 238, 0.44);
+        --toggle-bg: rgba(10, 16, 34, 0.78);
+        --toggle-border: rgba(146, 173, 255, 0.36);
+        --toggle-text: #dbe7ff;
+        --toggle-shadow: 0 10px 24px rgba(0, 0, 0, 0.3);
+        --theme-speed: 420ms;
+        --theme-ease: cubic-bezier(0.22, 1, 0.36, 1);
+        --theme-fade-duration: 360ms;
+        --theme-fade-dark: rgba(4, 8, 20, 0.52);
+        --theme-fade-light: rgba(242, 248, 255, 0.34);
+        --toggle-knob-a: #ffe8bc;
+        --toggle-knob-b: #f2a35f;
+        --toggle-knob-glow: rgba(255, 191, 118, 0.55);
+        --toggle-knob-crater: rgba(66, 86, 143, 0.35);
+      }
+
+      body.theme-light {
+        --bg-1: #f5f7ff;
+        --bg-2: #edf2ff;
+        --bg-3: #dfe8ff;
+        --bg-accent-1: rgba(116, 154, 255, 0.28);
+        --bg-accent-2: rgba(147, 178, 255, 0.24);
+        --grid-line: rgba(50, 86, 168, 0.08);
+        --grid-opacity: 0.45;
+        --panel: rgba(255, 255, 255, 0.86);
+        --panel-border: rgba(104, 132, 211, 0.34);
+        --console-shadow: 0 14px 34px rgba(67, 94, 160, 0.24);
+        --text-main: #1c263d;
+        --text-muted: #55658f;
+        --ring-1-bright: rgba(255, 212, 161, 0.44);
+        --ring-1-mid: rgba(255, 196, 133, 0.31);
+        --ring-1-fade: rgba(255, 179, 122, 0.08);
+        --ring-2-bright: rgba(255, 202, 149, 0.36);
+        --ring-2-mid: rgba(255, 183, 121, 0.25);
+        --ring-2-fade: rgba(255, 164, 105, 0.07);
+        --ring-3-bright: rgba(255, 193, 138, 0.31);
+        --ring-3-mid: rgba(255, 175, 112, 0.21);
+        --ring-3-fade: rgba(255, 153, 94, 0.06);
+        --ring-4-bright: rgba(255, 186, 128, 0.26);
+        --ring-4-mid: rgba(255, 168, 104, 0.18);
+        --ring-4-fade: rgba(255, 144, 84, 0.05);
+        --user-msg: linear-gradient(145deg, rgba(150, 178, 255, 0.46), rgba(103, 136, 226, 0.42));
+        --assistant-msg: linear-gradient(145deg, rgba(238, 244, 255, 0.92), rgba(224, 234, 255, 0.9));
+        --msg-border: rgba(117, 144, 219, 0.35);
+        --input-bg: rgba(250, 252, 255, 0.96);
+        --input-border: rgba(112, 142, 224, 0.42);
+        --placeholder: #6a7daa;
+        --source-text: #2f457c;
+        --source-border: rgba(112, 142, 224, 0.4);
+        --source-bg: rgba(208, 224, 255, 0.62);
+        --form-border: rgba(112, 142, 224, 0.28);
+        --status-color: #8f5a2d;
+        --status-shadow: rgba(255, 179, 101, 0.48);
+        --button-a: #e5995f;
+        --button-b: #c76a4f;
+        --button-text: #fff8f2;
+        --button-shadow: 0 8px 18px rgba(206, 120, 72, 0.34);
+        --toggle-bg: rgba(255, 255, 255, 0.86);
+        --toggle-border: rgba(112, 142, 224, 0.4);
+        --toggle-text: #314b85;
+        --toggle-shadow: 0 8px 20px rgba(88, 117, 186, 0.2);
+        --toggle-knob-a: #f2f7ff;
+        --toggle-knob-b: #b9ccff;
+        --toggle-knob-glow: rgba(126, 156, 236, 0.45);
+        --toggle-knob-crater: rgba(83, 109, 184, 0.36);
       }
 
       * {
@@ -49,8 +129,8 @@
         font-family: "Space Grotesk", "Avenir Next Condensed", "Trebuchet MS", sans-serif;
         color: var(--text-main);
         background:
-          radial-gradient(980px 620px at 50% 28%, rgba(34, 51, 109, 0.3), transparent 70%),
-          radial-gradient(760px 500px at 8% 10%, rgba(40, 64, 145, 0.18), transparent 76%),
+          radial-gradient(980px 620px at 50% 28%, var(--bg-accent-1), transparent 70%),
+          radial-gradient(760px 500px at 8% 10%, var(--bg-accent-2), transparent 76%),
           linear-gradient(170deg, var(--bg-1) 0%, var(--bg-2) 60%, var(--bg-3) 100%);
         overflow: hidden;
       }
@@ -60,12 +140,57 @@
         position: fixed;
         inset: 0;
         background-image:
-          linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
-          linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
+          linear-gradient(var(--grid-line) 1px, transparent 1px),
+          linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
         background-size: 42px 42px;
         mask-image: radial-gradient(circle at center, black 24%, transparent 88%);
         pointer-events: none;
-        opacity: 0.36;
+        opacity: var(--grid-opacity);
+      }
+
+      body::after {
+        content: "";
+        position: fixed;
+        inset: 0;
+        z-index: 28;
+        pointer-events: none;
+        background: transparent;
+        opacity: 0;
+      }
+
+      body.theme-fading.to-light::after {
+        background: var(--theme-fade-dark);
+        animation: themeCurtain var(--theme-fade-duration) var(--theme-ease) forwards;
+      }
+
+      body.theme-fading.to-dark::after {
+        background: var(--theme-fade-light);
+        animation: themeCurtain var(--theme-fade-duration) var(--theme-ease) forwards;
+      }
+
+      body.theme-ready,
+      body.theme-ready::before,
+      body.theme-ready .console,
+      body.theme-ready .msg,
+      body.theme-ready .source-pill,
+      body.theme-ready form,
+      body.theme-ready #message-input,
+      body.theme-ready #send-btn,
+      body.theme-ready .status,
+      body.theme-ready .ring,
+      body.theme-ready .theme-toggle,
+      body.theme-ready .theme-toggle-icon,
+      body.theme-ready .theme-toggle-icon::after,
+      body.theme-ready .theme-toggle-label {
+        transition:
+          color var(--theme-speed) var(--theme-ease),
+          background-color var(--theme-speed) var(--theme-ease),
+          background var(--theme-speed) var(--theme-ease),
+          border-color var(--theme-speed) var(--theme-ease),
+          box-shadow var(--theme-speed) var(--theme-ease),
+          text-shadow var(--theme-speed) var(--theme-ease),
+          opacity var(--theme-speed) var(--theme-ease),
+          filter var(--theme-speed) var(--theme-ease);
       }
 
       .stage {
@@ -231,9 +356,9 @@
         font-size: clamp(13px, 1.7vw, 15px);
         letter-spacing: 0.08em;
         text-transform: uppercase;
-        color: #f1dac0;
+        color: var(--status-color);
         text-align: center;
-        text-shadow: 0 0 18px rgba(233, 168, 118, 0.52);
+        text-shadow: 0 0 18px var(--status-shadow);
       }
 
       .console {
@@ -243,7 +368,7 @@
         border: 1px solid var(--panel-border);
         border-radius: 18px;
         backdrop-filter: blur(12px);
-        box-shadow: 0 16px 42px rgba(3, 7, 20, 0.56);
+        box-shadow: var(--console-shadow);
         overflow: hidden;
       }
 
@@ -261,7 +386,7 @@
         padding: 11px 12px;
         line-height: 1.45;
         white-space: pre-wrap;
-        border: 1px solid rgba(142, 168, 249, 0.24);
+        border: 1px solid var(--msg-border);
       }
 
       .msg.user {
@@ -294,12 +419,12 @@
         align-items: center;
         max-width: 100%;
         text-decoration: none;
-        color: #d9e5ff;
+        color: var(--source-text);
         font-size: 12px;
         padding: 5px 9px;
         border-radius: 999px;
-        border: 1px solid rgba(146, 173, 255, 0.34);
-        background: rgba(35, 50, 107, 0.56);
+        border: 1px solid var(--source-border);
+        background: var(--source-bg);
       }
 
       form {
@@ -307,12 +432,12 @@
         grid-template-columns: 1fr auto;
         gap: 10px;
         padding: 11px;
-        border-top: 1px solid rgba(146, 173, 255, 0.2);
+        border-top: 1px solid var(--form-border);
       }
 
       #message-input {
         width: 100%;
-        border: 1px solid rgba(138, 167, 255, 0.34);
+        border: 1px solid var(--input-border);
         border-radius: 11px;
         background: var(--input-bg);
         color: var(--text-main);
@@ -322,23 +447,162 @@
       }
 
       #message-input::placeholder {
-        color: #8d9ec9;
+        color: var(--placeholder);
       }
 
       #send-btn {
         border: 0;
         border-radius: 11px;
         padding: 0 16px;
-        color: #ecf2ff;
+        color: var(--button-text);
         font-weight: 700;
         cursor: pointer;
         background: linear-gradient(145deg, var(--button-a), var(--button-b));
-        box-shadow: 0 8px 22px rgba(66, 103, 238, 0.44);
+        box-shadow: var(--button-shadow);
       }
 
       #send-btn:disabled {
         opacity: 0.6;
         cursor: not-allowed;
+      }
+
+      .theme-toggle {
+        position: fixed;
+        z-index: 30;
+        top: 14px;
+        right: clamp(10px, 2.6vw, 22px);
+        display: inline-flex;
+        align-items: center;
+        gap: 9px;
+        min-width: 94px;
+        border: 1px solid var(--toggle-border);
+        border-radius: 999px;
+        background: var(--toggle-bg);
+        color: var(--toggle-text);
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        line-height: 1;
+        padding: 6px 10px 6px 7px;
+        cursor: pointer;
+        box-shadow: var(--toggle-shadow);
+        backdrop-filter: blur(8px);
+        transform: translateY(0);
+      }
+
+      .theme-toggle:hover {
+        transform: translateY(-1px);
+      }
+
+      .theme-toggle:active {
+        transform: translateY(0) scale(0.98);
+      }
+
+      .theme-toggle-icon {
+        position: relative;
+        width: 22px;
+        height: 22px;
+        flex: 0 0 22px;
+        border-radius: 50%;
+        background: radial-gradient(circle at 30% 30%, var(--toggle-knob-a) 0%, var(--toggle-knob-b) 70%);
+        box-shadow:
+          inset 0 0 0 1px rgba(255, 255, 255, 0.24),
+          0 0 14px var(--toggle-knob-glow);
+        transform: rotate(0deg) scale(1);
+      }
+
+      .theme-toggle-icon::after {
+        content: "";
+        position: absolute;
+        top: 4px;
+        right: 2px;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--toggle-knob-crater);
+        opacity: 0;
+        transform: scale(0.45) translate(-3px, 2px);
+      }
+
+      .theme-toggle-label {
+        position: relative;
+        z-index: 1;
+        min-width: 44px;
+        text-align: left;
+      }
+
+      body.theme-light .theme-toggle-icon {
+        transform: rotate(160deg) scale(0.92);
+      }
+
+      body.theme-light .theme-toggle-icon::after {
+        opacity: 1;
+        transform: scale(1) translate(0, 0);
+      }
+
+      body.theme-light .theme-toggle-label {
+        letter-spacing: 0.05em;
+      }
+
+      body.theme-ready .theme-toggle {
+        transition:
+          transform 220ms var(--theme-ease),
+          color var(--theme-speed) var(--theme-ease),
+          background-color var(--theme-speed) var(--theme-ease),
+          background var(--theme-speed) var(--theme-ease),
+          border-color var(--theme-speed) var(--theme-ease),
+          box-shadow var(--theme-speed) var(--theme-ease);
+      }
+
+      body.theme-ready .theme-toggle-icon {
+        transition:
+          transform 380ms var(--theme-ease),
+          background var(--theme-speed) var(--theme-ease),
+          box-shadow var(--theme-speed) var(--theme-ease);
+      }
+
+      body.theme-ready .theme-toggle-icon::after {
+        transition:
+          opacity 320ms var(--theme-ease),
+          transform 380ms var(--theme-ease),
+          background-color var(--theme-speed) var(--theme-ease),
+          background var(--theme-speed) var(--theme-ease);
+      }
+
+      body.theme-ready .theme-toggle-label {
+        transition:
+          letter-spacing 280ms var(--theme-ease),
+          color var(--theme-speed) var(--theme-ease);
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        body.theme-ready,
+        body.theme-ready::before,
+        body.theme-ready .console,
+        body.theme-ready .msg,
+        body.theme-ready .source-pill,
+        body.theme-ready form,
+        body.theme-ready #message-input,
+        body.theme-ready #send-btn,
+        body.theme-ready .status,
+        body.theme-ready .ring,
+        body.theme-ready .theme-toggle,
+        body.theme-ready .theme-toggle-icon,
+        body.theme-ready .theme-toggle-icon::after,
+        body.theme-ready .theme-toggle-label {
+          transition: none !important;
+        }
+
+        body.theme-fading::after {
+          animation: none !important;
+          opacity: 0 !important;
+        }
+
+        .theme-toggle,
+        .theme-toggle:hover,
+        .theme-toggle:active {
+          transform: none;
+        }
       }
 
       @keyframes corePulse {
@@ -535,6 +799,15 @@
         }
       }
 
+      @keyframes themeCurtain {
+        0% {
+          opacity: 0.82;
+        }
+        100% {
+          opacity: 0;
+        }
+      }
+
       @media (max-width: 740px) {
         .stage {
           grid-template-rows: auto 1fr;
@@ -566,10 +839,33 @@
         #send-btn {
           height: 42px;
         }
+
+        .theme-toggle {
+          top: 10px;
+          right: 10px;
+          font-size: 12px;
+          min-width: 88px;
+          gap: 8px;
+          padding: 5px 9px 5px 6px;
+        }
+
+        .theme-toggle-icon {
+          width: 20px;
+          height: 20px;
+          flex-basis: 20px;
+        }
+
+        .theme-toggle-label {
+          min-width: 40px;
+        }
       }
     </style>
   </head>
   <body>
+    <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Switch theme">
+      <span class="theme-toggle-icon" aria-hidden="true"></span>
+      <span class="theme-toggle-label" id="theme-toggle-label">Light</span>
+    </button>
     <div class="stage">
       <section class="centerpiece" aria-label="TA Visualizer">
         <div class="orb-wrap" id="orb-wrap">
@@ -597,6 +893,73 @@
       const inputEl = document.getElementById("message-input");
       const btnEl = document.getElementById("send-btn");
       const statusEl = document.getElementById("status-text");
+      const themeToggleEl = document.getElementById("theme-toggle");
+      const themeToggleLabelEl = document.getElementById("theme-toggle-label");
+      const THEME_KEY = "tai-theme";
+      const prefersReducedMotion =
+        typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      let themeFadeTimeout = null;
+
+      function getInitialTheme() {
+        let storedTheme = null;
+        try {
+          storedTheme = localStorage.getItem(THEME_KEY);
+        } catch (err) {
+          storedTheme = null;
+        }
+        if (storedTheme === "light" || storedTheme === "dark") {
+          return storedTheme;
+        }
+        const prefersLight =
+          typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: light)").matches;
+        return prefersLight ? "light" : "dark";
+      }
+
+      function applyTheme(theme) {
+        const isLight = theme === "light";
+        document.body.classList.toggle("theme-light", isLight);
+        themeToggleLabelEl.textContent = isLight ? "Dark" : "Light";
+        themeToggleEl.setAttribute("aria-pressed", isLight ? "true" : "false");
+        themeToggleEl.setAttribute("aria-label", isLight ? "Switch to dark mode" : "Switch to light mode");
+      }
+
+      function transitionTheme(nextTheme) {
+        if (prefersReducedMotion) {
+          applyTheme(nextTheme);
+          return;
+        }
+
+        if (themeFadeTimeout !== null) {
+          window.clearTimeout(themeFadeTimeout);
+          themeFadeTimeout = null;
+        }
+
+        const directionClass = nextTheme === "light" ? "to-light" : "to-dark";
+        document.body.classList.remove("theme-fading", "to-light", "to-dark");
+        document.body.classList.add("theme-fading", directionClass);
+        applyTheme(nextTheme);
+
+        themeFadeTimeout = window.setTimeout(() => {
+          document.body.classList.remove("theme-fading", "to-light", "to-dark");
+          themeFadeTimeout = null;
+        }, 390);
+      }
+
+      let currentTheme = getInitialTheme();
+      applyTheme(currentTheme);
+      requestAnimationFrame(() => {
+        document.body.classList.add("theme-ready");
+      });
+
+      themeToggleEl.addEventListener("click", () => {
+        currentTheme = currentTheme === "light" ? "dark" : "light";
+        transitionTheme(currentTheme);
+        try {
+          localStorage.setItem(THEME_KEY, currentTheme);
+        } catch (err) {
+          // Ignore storage failures (private mode or blocked storage).
+        }
+      });
 
       function setThinking(value) {
         if (value) {

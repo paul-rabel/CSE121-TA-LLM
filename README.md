@@ -10,7 +10,7 @@ It includes:
 ## Static Demo on GitHub Pages (No Backend)
 
 This repo includes a backend-free demo:
-- `https://<username>.github.io/<repo>/`
+- https://paul-rabel.github.io/CSE121-TA-LLM/
 
 What it does:
 - Runs fully in the browser.

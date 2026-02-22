@@ -40,14 +40,21 @@ Use this mode for maximum stability and zero LLM dependency.
 ENABLE_LLM_RESPONSE=0 .venv/bin/python answer_service.py
 ```
 
-### LLM Rewrite Mode (recommended)
+### LLM Rewrite Mode (optional)
 
 This mode attempts an LLM rewrite on top of retrieval evidence. If citations or grounding checks fail, the service falls back to deterministic/extractive output.
+LLM mode requires Ollama to be installed and running locally.
 
 ```bash
-export OLLAMA_MODEL=llama3.2:latest
+# Optional: set a specific model.
+# If omitted, the service auto-selects the first installed Ollama model.
+export OLLAMA_MODEL=llama3.2:3b
 ENABLE_LLM_RESPONSE=1 .venv/bin/python answer_service.py
 ```
+
+Install Ollama: [ollama.com/download](https://ollama.com/download)  
+List installed models: `ollama list`  
+Pull a model: `ollama pull llama3.2:3b`
 
 ## Quick Start
 
@@ -145,12 +152,15 @@ Key environment variables:
 |---|---|---|
 | `ENABLE_LLM_RESPONSE` | `1` | Enable/disable LLM rewrite mode |
 | `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Ollama endpoint |
-| `OLLAMA_MODEL` | `llama3.2:latest` | Ollama model name |
+| `OLLAMA_MODEL` | empty | Optional Ollama model name. If empty, auto-select first installed model |
+| `OLLAMA_TAGS_TIMEOUT_SECS` | `3` | Timeout for Ollama model auto-discovery (`/api/tags`) |
 | `ENABLE_DENSE_RETRIEVAL` | `0` | Enable dense retrieval in hybrid ranking |
 | `LLM_REQUIRE_VALID_CITATIONS` | `1` | Reject LLM answers with invalid/missing `[source N]` citations |
 | `ENABLE_SESSION_MEMORY` | `1` | Enable multi-turn context memory |
 | `ENABLE_CLARIFICATION_STITCH` | `1` | Stitch follow-up clarification replies into unresolved prior query |
 | `DEBUG_SOURCE_DETAILS` | `0` | Include `why`/`evidence` debug fields in source payload |
+
+Use `.env.example` as a template for local configuration.
 
 ## Rebuild Data
 

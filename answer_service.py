@@ -50,8 +50,9 @@ DEBUG_SOURCE_DETAILS_DEFAULT = os.getenv("DEBUG_SOURCE_DETAILS", "0") == "1"
 ENABLE_DENSE_RETRIEVAL = os.getenv("ENABLE_DENSE_RETRIEVAL", "0") == "1"
 ENABLE_LLM_RESPONSE = os.getenv("ENABLE_LLM_RESPONSE", "1") == "1"
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:latest")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "").strip()
 OLLAMA_TIMEOUT_SECS = int(os.getenv("OLLAMA_TIMEOUT_SECS", "45"))
+OLLAMA_TAGS_TIMEOUT_SECS = int(os.getenv("OLLAMA_TAGS_TIMEOUT_SECS", "3"))
 LLM_CONTEXT_SOURCE_LIMIT = max(1, int(os.getenv("LLM_CONTEXT_SOURCE_LIMIT", "6")))
 LLM_CONTEXT_LINES_PER_SOURCE = max(1, int(os.getenv("LLM_CONTEXT_LINES_PER_SOURCE", "3")))
 LLM_CONTEXT_SNIPPET_CHARS = max(120, int(os.getenv("LLM_CONTEXT_SNIPPET_CHARS", "420")))
@@ -60,6 +61,10 @@ SECTION_WINDOW_CHUNKS = max(0, int(os.getenv("SECTION_WINDOW_CHUNKS", "1")))
 SECTION_CONTEXT_MAX_CHUNKS = max(1, int(os.getenv("SECTION_CONTEXT_MAX_CHUNKS", "4")))
 ENABLE_CLARIFICATION_STITCH = os.getenv("ENABLE_CLARIFICATION_STITCH", "1") == "1"
 ALWAYS_ATTEMPT_LLM = os.getenv("ALWAYS_ATTEMPT_LLM", "1") == "1"
+
+_OLLAMA_MODEL_CACHE = ""
+_OLLAMA_MODEL_LOOKUP_ATTEMPTED = False
+_OLLAMA_MODEL_LOCK = Lock()
 
 NO_ANSWER_TEXT = (
     "I couldn't find a reliable answer in the indexed course content for that question."
@@ -1927,6 +1932,73 @@ def _extract_ollama_output_text(payload: dict) -> str:
     return ""
 
 
+def ollama_model_from_tags_payload(payload: dict) -> Optional[str]:
+    if not isinstance(payload, dict):
+        return None
+    models = payload.get("models")
+    if not isinstance(models, list):
+        return None
+    for model_row in models:
+        if not isinstance(model_row, dict):
+            continue
+        model_name = model_row.get("name") or model_row.get("model")
+        if isinstance(model_name, str) and model_name.strip():
+            return model_name.strip()
+    return None
+
+
+def discover_ollama_model(force_refresh: bool = False) -> Optional[str]:
+    global _OLLAMA_MODEL_CACHE, _OLLAMA_MODEL_LOOKUP_ATTEMPTED
+    with _OLLAMA_MODEL_LOCK:
+        if _OLLAMA_MODEL_LOOKUP_ATTEMPTED and not force_refresh:
+            return _OLLAMA_MODEL_CACHE or None
+
+        model_name = ""
+        req = Request(
+            f"{OLLAMA_BASE_URL.rstrip('/')}/api/tags",
+            method="GET",
+        )
+        try:
+            with urlopen(req, timeout=OLLAMA_TAGS_TIMEOUT_SECS) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+            model_name = ollama_model_from_tags_payload(payload) or ""
+        except (urlerror.URLError, TimeoutError, ValueError):
+            model_name = ""
+
+        _OLLAMA_MODEL_CACHE = model_name
+        _OLLAMA_MODEL_LOOKUP_ATTEMPTED = True
+        return model_name or None
+
+
+def preferred_ollama_model() -> Optional[str]:
+    if OLLAMA_MODEL:
+        return OLLAMA_MODEL
+    return discover_ollama_model()
+
+
+def request_ollama_generate(model: str, prompt: str) -> dict:
+    request_body = {
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+        "options": {
+            "temperature": 0.1,
+        },
+    }
+
+    req = Request(
+        f"{OLLAMA_BASE_URL.rstrip('/')}/api/generate",
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+        },
+        data=json.dumps(request_body).encode("utf-8"),
+    )
+
+    with urlopen(req, timeout=OLLAMA_TIMEOUT_SECS) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
 def extract_source_citations(text: str) -> List[int]:
     citations: List[int] = []
     seen = set()
@@ -2110,6 +2182,15 @@ def build_llm_answer(
     if not context_block.strip():
         return NO_ANSWER_TEXT
 
+    model_name = preferred_ollama_model()
+    if not model_name:
+        print(
+            "Ollama model unavailable; set OLLAMA_MODEL or install/pull any model. "
+            "Falling back to extractive/deterministic answer.",
+            file=sys.stderr,
+        )
+        return None
+
     system_prompt = (
         "You are a helpful CSE 121 course assistant.\n"
         "Use only the provided source snippets.\n"
@@ -2132,27 +2213,21 @@ def build_llm_answer(
     user_prompt = "\n\n".join(user_parts)
 
     prompt = f"{system_prompt}\n\n{user_prompt}"
-    request_body = {
-        "model": OLLAMA_MODEL,
-        "prompt": prompt,
-        "stream": False,
-        "options": {
-            "temperature": 0.1,
-        },
-    }
-
-    req = Request(
-        f"{OLLAMA_BASE_URL.rstrip('/')}/api/generate",
-        method="POST",
-        headers={
-            "Content-Type": "application/json",
-        },
-        data=json.dumps(request_body).encode("utf-8"),
-    )
 
     try:
-        with urlopen(req, timeout=OLLAMA_TIMEOUT_SECS) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
+        payload = request_ollama_generate(model_name, prompt)
+        model_error = payload.get("error")
+        if isinstance(model_error, str) and model_error:
+            # If a configured model name is stale/not installed, try a discovered
+            # local model once before giving up.
+            if OLLAMA_MODEL and "not found" in model_error.lower():
+                discovered = discover_ollama_model(force_refresh=True)
+                if discovered and discovered != model_name:
+                    payload = request_ollama_generate(discovered, prompt)
+                    model_error = payload.get("error")
+            if isinstance(model_error, str) and model_error:
+                raise ValueError(model_error)
+
         text = _extract_ollama_output_text(payload)
         if not text:
             return None

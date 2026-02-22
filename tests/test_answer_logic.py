@@ -173,6 +173,17 @@ class AnswerLogicTests(unittest.TestCase):
             )
         )
 
+    def test_ollama_model_from_tags_payload(self):
+        payload = {
+            "models": [
+                {"name": "llama3.2:3b"},
+                {"name": "mistral:7b"},
+            ]
+        }
+        self.assertEqual(answer_service.ollama_model_from_tags_payload(payload), "llama3.2:3b")
+        self.assertIsNone(answer_service.ollama_model_from_tags_payload({"models": []}))
+        self.assertIsNone(answer_service.ollama_model_from_tags_payload({}))
+
     def test_llm_grounding_and_preferred_conflict_guards(self):
         context = (
             "[source 1] CSE 121 - https://courses.cs.washington.edu/courses/cse121/26wi/\n"
@@ -235,6 +246,14 @@ class AnswerLogicTests(unittest.TestCase):
             [generic, specific],
         )
         self.assertEqual(ranked[0].doc_id, specific.doc_id)
+
+    def test_preferred_ollama_model_prefers_env_value(self):
+        original_model = answer_service.OLLAMA_MODEL
+        answer_service.OLLAMA_MODEL = "custom-model:latest"
+        try:
+            self.assertEqual(answer_service.preferred_ollama_model(), "custom-model:latest")
+        finally:
+            answer_service.OLLAMA_MODEL = original_model
 
     def test_clarification_detection_and_stitch_heuristic(self):
         self.assertTrue(

@@ -1,0 +1,134 @@
+[
+  {
+    "id": "r4_due_and_eligible",
+    "turns": [
+      {
+        "message": "When is R4 due and what assignments are eligible?",
+        "expect_mode": "deterministic",
+        "must_contain": ["r4", "due", "eligible assignments"]
+      }
+    ]
+  },
+  {
+    "id": "late_policy",
+    "turns": [
+      {
+        "message": "What is the late policy?",
+        "expect_mode": "extractive",
+        "must_contain": ["late"]
+      }
+    ]
+  },
+  {
+    "id": "instructor_info",
+    "turns": [
+      {
+        "message": "Who is the instructor?",
+        "expect_mode": "deterministic",
+        "must_contain": ["miya natsuhara"]
+      }
+    ]
+  },
+  {
+    "id": "lecture_location",
+    "turns": [
+      {
+        "message": "Where are lectures?",
+        "expect_mode": "deterministic",
+        "must_contain": ["lecture", "cse2"]
+      }
+    ]
+  },
+  {
+    "id": "lecture_when",
+    "turns": [
+      {
+        "message": "When is lecture?",
+        "expect_mode": "deterministic",
+        "must_contain": ["wednesday", "friday"]
+      }
+    ]
+  },
+  {
+    "id": "esn_definition",
+    "turns": [
+      {
+        "message": "What is ESN?",
+        "expect_mode": "deterministic",
+        "must_contain": ["excellent", "satisfactory", "not yet"]
+      }
+    ]
+  },
+  {
+    "id": "dance_dance_arrayvolution",
+    "turns": [
+      {
+        "message": "What is Dance Dance Arrayvolution?",
+        "expect_mode": "deterministic",
+        "must_contain": ["dance dance arrayvolution", "c3"]
+      }
+    ]
+  },
+  {
+    "id": "quiz_2_date",
+    "turns": [
+      {
+        "message": "When is the 2nd quiz?",
+        "expect_mode": "deterministic",
+        "must_contain": ["quiz 2", "03/05"]
+      }
+    ]
+  },
+  {
+    "id": "memory_referential_followup",
+    "turns": [
+      {
+        "message": "When is R4 due?",
+        "expect_mode": "deterministic",
+        "must_contain": ["r4", "due"]
+      },
+      {
+        "message": "What about it?",
+        "expect_mode": "deterministic",
+        "must_contain": ["r4", "due"],
+        "expect_memory": true
+      }
+    ]
+  },
+  {
+    "id": "memory_assignment_followup",
+    "turns": [
+      {
+        "message": "What assignments are eligible for R4?",
+        "expect_mode": "deterministic",
+        "must_contain": ["eligible assignments", "r4"]
+      },
+      {
+        "message": "What assignments are eligible?",
+        "expect_mode": "deterministic",
+        "must_contain": ["eligible assignments", "r4"],
+        "expect_memory": true
+      }
+    ]
+  },
+  {
+    "id": "unknown_name_query",
+    "turns": [
+      {
+        "message": "What is C3 called?",
+        "expect_mode": "deterministic",
+        "must_contain": ["c3 is dance dance arrayvolution"]
+      }
+    ]
+  },
+  {
+    "id": "c2_name_query",
+    "turns": [
+      {
+        "message": "What is C2?",
+        "expect_mode": "deterministic",
+        "must_contain": ["c2 is password protector"]
+      }
+    ]
+  }
+]

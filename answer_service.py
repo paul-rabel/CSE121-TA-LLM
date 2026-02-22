@@ -3,12 +3,13 @@ import math
 import os
 import re
 import sys
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from threading import Lock
+from typing import Any, Dict, List, Optional, Tuple
 from urllib import error as urlerror
 from urllib.request import Request, urlopen
 from urllib.parse import urlparse
@@ -26,6 +27,7 @@ ROOT = Path(__file__).parent
 VECTOR_DIR = ROOT / "data" / "vectors"
 INDEX_PATH = VECTOR_DIR / "cse121_faiss.index"
 METADATA_PATH = VECTOR_DIR / "metadata.json"
+TOKEN_INDEX_PATH = VECTOR_DIR / "token_index.json"
 CHAT_HTML_PATH = ROOT / "static" / "chat.html"
 
 if load_dotenv:
@@ -38,11 +40,26 @@ BM25_K1 = 1.5
 BM25_B = 0.75
 MIN_SENTENCE_SCORE = 2.0
 MIN_QUERY_TOKEN_COVERAGE = 0.45
+RERANK_CANDIDATE_MULTIPLIER = max(2, int(os.getenv("RERANK_CANDIDATE_MULTIPLIER", "4")))
+POSTINGS_CANDIDATE_MULTIPLIER = max(2, int(os.getenv("POSTINGS_CANDIDATE_MULTIPLIER", "6")))
+RERANK_SEMANTIC_WEIGHT = float(os.getenv("RERANK_SEMANTIC_WEIGHT", "3.5"))
+SESSION_MEMORY_TURNS = max(1, int(os.getenv("SESSION_MEMORY_TURNS", "6")))
+SESSION_MEMORY_MAX_SESSIONS = max(4, int(os.getenv("SESSION_MEMORY_MAX_SESSIONS", "256")))
+ENABLE_SESSION_MEMORY = os.getenv("ENABLE_SESSION_MEMORY", "1") == "1"
+DEBUG_SOURCE_DETAILS_DEFAULT = os.getenv("DEBUG_SOURCE_DETAILS", "0") == "1"
 ENABLE_DENSE_RETRIEVAL = os.getenv("ENABLE_DENSE_RETRIEVAL", "0") == "1"
 ENABLE_LLM_RESPONSE = os.getenv("ENABLE_LLM_RESPONSE", "1") == "1"
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:latest")
 OLLAMA_TIMEOUT_SECS = int(os.getenv("OLLAMA_TIMEOUT_SECS", "45"))
+LLM_CONTEXT_SOURCE_LIMIT = max(1, int(os.getenv("LLM_CONTEXT_SOURCE_LIMIT", "6")))
+LLM_CONTEXT_LINES_PER_SOURCE = max(1, int(os.getenv("LLM_CONTEXT_LINES_PER_SOURCE", "3")))
+LLM_CONTEXT_SNIPPET_CHARS = max(120, int(os.getenv("LLM_CONTEXT_SNIPPET_CHARS", "420")))
+LLM_REQUIRE_VALID_CITATIONS = os.getenv("LLM_REQUIRE_VALID_CITATIONS", "1") == "1"
+SECTION_WINDOW_CHUNKS = max(0, int(os.getenv("SECTION_WINDOW_CHUNKS", "1")))
+SECTION_CONTEXT_MAX_CHUNKS = max(1, int(os.getenv("SECTION_CONTEXT_MAX_CHUNKS", "4")))
+ENABLE_CLARIFICATION_STITCH = os.getenv("ENABLE_CLARIFICATION_STITCH", "1") == "1"
+ALWAYS_ATTEMPT_LLM = os.getenv("ALWAYS_ATTEMPT_LLM", "1") == "1"
 
 NO_ANSWER_TEXT = (
     "I couldn't find a reliable answer in the indexed course content for that question."
@@ -55,6 +72,40 @@ DATE_PATTERN = re.compile(
 )
 
 TIME_PATTERN = re.compile(r"\b\d{1,2}:\d{2}\s*(?:am|pm)\b", re.IGNORECASE)
+INSTRUCTOR_LINE_PATTERN = re.compile(
+    r"\*\*Instructor:\*\*\s*([A-Z][A-Za-z'`.-]+(?:\s+[A-Z][A-Za-z'`.-]+){1,3})"
+)
+EMAIL_PATTERN = re.compile(r"\b[a-z0-9._%+-]+@(?:uw|cs)\.washington\.edu\b", re.IGNORECASE)
+LECTURE_DAY_PATTERN = re.compile(r"\|\s*(Mon|Tue|Wed|Thu|Fri)\s+\d{2}/\d{2}\s*\|\s*LES", re.IGNORECASE)
+LECTURE_LOCATION_LINE_PATTERN = re.compile(r"lecture\s*@[^|]+", re.IGNORECASE)
+QUIZ_LINE_PATTERN = re.compile(
+    r"\|\s*(Mon|Tue|Wed|Thu|Fri)\s+(\d{2}/\d{2})\s*\|\s*QUIZ\s*0?(\d+)\s*([^|]*)",
+    re.IGNORECASE,
+)
+SOURCE_CITATION_PATTERN = re.compile(r"\[source\s+(\d+)\]", re.IGNORECASE)
+SECTION_HEADING_PATTERN = re.compile(r"^#{1,6}\s+(.+)$")
+CLARIFICATION_HINT_PATTERN = re.compile(
+    r"(could you clarify|can you clarify|do you mean|which one|which .* are you asking|please clarify|please specify)",
+    re.IGNORECASE,
+)
+WEEKDAY_PATTERN = re.compile(
+    r"\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun)\b",
+    re.IGNORECASE,
+)
+ROOM_PATTERN = re.compile(r"\b(?:cse2|gug)\s*[a-z]?\d+\b", re.IGNORECASE)
+
+ORDINAL_WORD_TO_INT = {
+    "first": 1,
+    "second": 2,
+    "third": 3,
+    "fourth": 4,
+    "fifth": 5,
+    "sixth": 6,
+    "seventh": 7,
+    "eighth": 8,
+    "ninth": 9,
+    "tenth": 10,
+}
 
 COMMON_STOPWORDS = {
     "a",
@@ -113,6 +164,10 @@ LINE_LABEL_PATTERN = re.compile(
     r"\b(?:quiz\s*0?(\d+)|([cpr])\s*0?(\d+)|resub(?:mission)?\s*0?(\d+))\b",
     re.IGNORECASE,
 )
+RELEASED_ASSIGNMENT_PATTERN = re.compile(
+    r"Released\s+([CP]\d+)\s+(.+?)\s+I\.S\.\s+by\s+(.+?)(?:\s*\||$)",
+    re.IGNORECASE,
+)
 
 TOKEN_NORMALIZATION_MAP = {
     "assignments": "assignment",
@@ -141,6 +196,16 @@ QUERY_TOKEN_CORRECTIONS = {
     "assigment": "assignment",
 }
 
+FOLLOWUP_PREFIXES = (
+    "what about",
+    "how about",
+    "and ",
+    "also ",
+    "same for",
+    "what if",
+)
+REFERENTIAL_PATTERN = re.compile(r"\b(it|that|this|they|them|those|these)\b", re.IGNORECASE)
+
 
 @dataclass
 class SearchResult:
@@ -151,6 +216,7 @@ class SearchResult:
     chunk_index: int
     distance: float
     score: float
+    section: str = ""
 
 
 @dataclass
@@ -158,6 +224,66 @@ class EvidenceSelection:
     lines: List[Tuple[str, int]]
     top_score: float
     confident: bool
+
+
+@dataclass
+class ConversationTurn:
+    query: str
+    answer: str
+    labels: List[str]
+
+
+class SessionMemoryManager:
+    def __init__(self, max_sessions: int = SESSION_MEMORY_MAX_SESSIONS, turn_limit: int = SESSION_MEMORY_TURNS) -> None:
+        self.max_sessions = max_sessions
+        self.turn_limit = turn_limit
+        self._sessions: Dict[str, deque] = {}
+        self._pending_clarifications: Dict[str, str] = {}
+        self._lock = Lock()
+
+    def _ensure_session_unlocked(self, session_id: str) -> deque:
+        if session_id not in self._sessions:
+            if len(self._sessions) >= self.max_sessions:
+                oldest_session = next(iter(self._sessions))
+                self._sessions.pop(oldest_session, None)
+                self._pending_clarifications.pop(oldest_session, None)
+            self._sessions[session_id] = deque(maxlen=self.turn_limit)
+        return self._sessions[session_id]
+
+    def get_turns(self, session_id: Optional[str]) -> List[ConversationTurn]:
+        if not session_id:
+            return []
+        with self._lock:
+            turns = self._sessions.get(session_id)
+            if not turns:
+                return []
+            return list(turns)
+
+    def add_turn(self, session_id: Optional[str], turn: ConversationTurn) -> None:
+        if not session_id:
+            return
+        with self._lock:
+            turns = self._ensure_session_unlocked(session_id)
+            turns.append(turn)
+
+    def get_pending_clarification(self, session_id: Optional[str]) -> Optional[str]:
+        if not session_id:
+            return None
+        with self._lock:
+            return self._pending_clarifications.get(session_id)
+
+    def set_pending_clarification(self, session_id: Optional[str], original_query: str) -> None:
+        if not session_id or not original_query.strip():
+            return
+        with self._lock:
+            self._ensure_session_unlocked(session_id)
+            self._pending_clarifications[session_id] = original_query.strip()
+
+    def clear_pending_clarification(self, session_id: Optional[str]) -> None:
+        if not session_id:
+            return
+        with self._lock:
+            self._pending_clarifications.pop(session_id, None)
 
 
 def tokenize(text: str) -> List[str]:
@@ -403,6 +529,96 @@ def expanded_query_terms(
     return expanded
 
 
+def canonical_labels_from_query(query: str) -> List[str]:
+    labels: List[str] = []
+    for hint in extract_query_labels(query):
+        canonical = canonicalize_label_token(hint)
+        if canonical and canonical not in labels:
+            labels.append(canonical)
+    return labels
+
+
+def rewrite_query_with_memory(query: str, history: List[ConversationTurn]) -> Tuple[str, List[str], List[str]]:
+    if not history:
+        return query, [], canonical_labels_from_query(query)
+
+    rewritten = query
+    notes: List[str] = []
+    query_labels = canonical_labels_from_query(query)
+    query_lower = query.lower().strip()
+    current_intents = infer_query_intents(query)
+    previous_turn = history[-1]
+    previous_intents = infer_query_intents(previous_turn.query)
+    previous_labels = previous_turn.labels
+    query_terms_lower = query_terms(query, for_query=True)
+    has_explicit_name_request = any(
+        phrase in query_lower for phrase in ("what is", "what's", "name", "called", "title")
+    )
+    has_explicit_due_request = any(word in query_lower for word in ("when", "due", "deadline", "time"))
+    has_followup_prefix = any(query_lower.startswith(prefix) for prefix in FOLLOWUP_PREFIXES)
+    has_referential_term = bool(REFERENTIAL_PATTERN.search(query_lower))
+
+    appended_terms: List[str] = []
+    seen_terms = set()
+
+    def append_term(term: str) -> None:
+        if term not in seen_terms:
+            appended_terms.append(term)
+            seen_terms.add(term)
+
+    # Resolve referential follow-ups like "When is it due?" to the last label.
+    if not query_labels and previous_labels:
+        assignment_followup = (
+            current_intents["wants_assignments"]
+            and previous_intents["wants_assignments"]
+            and len(query_terms_lower) <= 6
+        )
+        if has_referential_term or has_followup_prefix or assignment_followup:
+            context_label = previous_labels[0]
+            append_term(_format_canonical_label(context_label))
+            query_labels.append(context_label)
+            notes.append(f"Used recent context: {_format_canonical_label(context_label)}.")
+
+    # For short follow-ups ("what about C4?"), inherit prior intent if user omitted it.
+    inherits_intent = (has_followup_prefix or has_referential_term) and not has_explicit_name_request
+    if inherits_intent and query_labels:
+        if previous_intents["wants_time"] and not current_intents["wants_time"] and not has_explicit_due_request:
+            append_term("due")
+            append_term("deadline")
+            notes.append("Inherited due-time intent from previous turn.")
+        if previous_intents["wants_location"] and not current_intents["wants_location"]:
+            append_term("location")
+            append_term("where")
+            notes.append("Inherited location intent from previous turn.")
+        if previous_intents["wants_staff"] and not current_intents["wants_staff"]:
+            append_term("staff")
+            append_term("instructor")
+            notes.append("Inherited staff intent from previous turn.")
+        if previous_intents["wants_policy"] and not current_intents["wants_policy"] and not current_intents["wants_assignments"]:
+            append_term("policy")
+            notes.append("Inherited policy intent from previous turn.")
+
+    if appended_terms:
+        rewritten = f"{query} {' '.join(appended_terms)}"
+
+    return rewritten, notes, query_labels
+
+
+def cosine_similarity(vec_a: List[float], vec_b: List[float]) -> float:
+    dot = 0.0
+    norm_a = 0.0
+    norm_b = 0.0
+    for a, b in zip(vec_a, vec_b):
+        fa = float(a)
+        fb = float(b)
+        dot += fa * fb
+        norm_a += fa * fa
+        norm_b += fb * fb
+    if norm_a <= 0.0 or norm_b <= 0.0:
+        return 0.0
+    return dot / (math.sqrt(norm_a) * math.sqrt(norm_b))
+
+
 def normalize_line(line: str) -> str:
     # Keep text readable while stripping markdown/table noise.
     cleaned = line.replace("|", " ").replace("`", " ").replace("<br>", " ")
@@ -411,6 +627,44 @@ def normalize_line(line: str) -> str:
     cleaned = re.sub(r"\[(.*?)\]\((.*?)\)", r"\1", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     return cleaned
+
+
+def infer_section_name(text: str, fallback: str = "") -> str:
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        heading_match = SECTION_HEADING_PATTERN.match(line)
+        if heading_match:
+            heading = normalize_line(heading_match.group(1)).strip()
+            if heading:
+                return heading
+    return fallback
+
+
+def is_clarification_request(text: str) -> bool:
+    if not text:
+        return False
+    if "?" not in text:
+        return False
+    if CLARIFICATION_HINT_PATTERN.search(text):
+        return True
+    short_text = text.strip()
+    if len(short_text) <= 180 and short_text.lower().startswith(("which ", "do you mean", "can you clarify")):
+        return True
+    return False
+
+
+def should_stitch_pending_query(message: str) -> bool:
+    lower = message.lower().strip()
+    if not lower:
+        return False
+    if any(phrase in lower for phrase in ("new question", "different question", "never mind", "ignore that")):
+        return False
+    if len(query_terms(lower, for_query=True)) <= 12:
+        return True
+    # Long, clearly standalone prompts should start a fresh query.
+    return not any(word in lower for word in (" when ", " where ", " who ", " what ", " how ", "?"))
 
 
 def score_line(
@@ -531,6 +785,17 @@ class Retriever:
 
         with METADATA_PATH.open("r", encoding="utf-8") as f:
             self.metadata = json.load(f)
+        if not isinstance(self.metadata, list):
+            raise ValueError(f"Expected metadata list in {METADATA_PATH}")
+        for row in self.metadata:
+            if not isinstance(row, dict):
+                continue
+            meta = row.setdefault("metadata", {})
+            title = str(meta.get("title", "Untitled"))
+            section = str(meta.get("section", "")).strip()
+            if not section:
+                section = infer_section_name(str(row.get("text", "")), fallback=title)
+                meta["section"] = section
 
         # BM25 lexical index (works fully offline).
         self.doc_term_freq: List[Counter] = []
@@ -538,6 +803,13 @@ class Retriever:
         self.doc_freq: Dict[str, int] = defaultdict(int)
         self.avg_doc_len = 1.0
         self._build_bm25_index()
+        self.docs_by_url: Dict[str, List[int]] = defaultdict(list)
+        self.doc_position_by_id: Dict[int, int] = {}
+        self.docs_by_url_section: Dict[Tuple[str, str], List[int]] = defaultdict(list)
+        self._build_doc_navigation_index()
+        self.token_postings: Dict[str, List[Tuple[int, int]]] = {}
+        self.token_doc_freq: Dict[str, int] = {}
+        self._load_token_postings_index()
 
         self.index = None
         self.model = None
@@ -557,6 +829,94 @@ class Retriever:
                     f"Reason: {exc}",
                     file=sys.stderr,
                 )
+
+    def _build_doc_navigation_index(self) -> None:
+        self.docs_by_url.clear()
+        self.doc_position_by_id.clear()
+        self.docs_by_url_section.clear()
+
+        for doc_id, row in enumerate(self.metadata):
+            meta = row.get("metadata", {})
+            url = str(meta.get("url", ""))
+            self.docs_by_url[url].append(doc_id)
+
+        for url, doc_ids in self.docs_by_url.items():
+            doc_ids.sort(
+                key=lambda doc_id: int(self.metadata[doc_id].get("metadata", {}).get("chunk_index", doc_id))
+            )
+            for position, doc_id in enumerate(doc_ids):
+                self.doc_position_by_id[doc_id] = position
+                meta = self.metadata[doc_id].get("metadata", {})
+                section = str(meta.get("section", "")).strip() or str(meta.get("title", "Untitled"))
+                self.docs_by_url_section[(url, section)].append(doc_id)
+
+    def _build_token_postings_from_metadata(self) -> Dict[str, List[Tuple[int, int]]]:
+        postings: Dict[str, Dict[int, int]] = defaultdict(dict)
+        for doc_id, row in enumerate(self.metadata):
+            meta = row.get("metadata", {})
+            combined = " ".join(
+                [
+                    str(meta.get("title", "")),
+                    str(meta.get("section", "")),
+                    str(row.get("text", "")),
+                ]
+            )
+            tf = Counter(query_terms(combined))
+            for token, count in tf.items():
+                postings[token][doc_id] = int(count)
+
+        normalized: Dict[str, List[Tuple[int, int]]] = {}
+        for token, doc_map in postings.items():
+            pairs = sorted(doc_map.items(), key=lambda item: item[0])
+            normalized[token] = pairs
+        return normalized
+
+    def _load_token_postings_index(self) -> None:
+        loaded = False
+        if TOKEN_INDEX_PATH.exists():
+            try:
+                with TOKEN_INDEX_PATH.open("r", encoding="utf-8") as f:
+                    payload = json.load(f)
+                raw_postings = payload.get("token_postings", {}) if isinstance(payload, dict) else {}
+                if isinstance(raw_postings, dict):
+                    parsed: Dict[str, List[Tuple[int, int]]] = {}
+                    for token, rows in raw_postings.items():
+                        if not isinstance(token, str) or not isinstance(rows, list):
+                            continue
+                        pairs: List[Tuple[int, int]] = []
+                        for row in rows:
+                            if not isinstance(row, list) or len(row) != 2:
+                                continue
+                            doc_id = int(row[0])
+                            freq = int(row[1])
+                            if doc_id < 0 or doc_id >= len(self.metadata) or freq <= 0:
+                                continue
+                            pairs.append((doc_id, freq))
+                        if pairs:
+                            parsed[token] = pairs
+                    if parsed:
+                        self.token_postings = parsed
+                        loaded = True
+            except Exception as exc:
+                print(f"Token index load failed; rebuilding in memory. Reason: {exc}", file=sys.stderr)
+
+        if not loaded:
+            self.token_postings = self._build_token_postings_from_metadata()
+            try:
+                payload = {
+                    "version": 1,
+                    "doc_count": len(self.metadata),
+                    "token_postings": {
+                        token: [[doc_id, freq] for doc_id, freq in postings]
+                        for token, postings in self.token_postings.items()
+                    },
+                }
+                with TOKEN_INDEX_PATH.open("w", encoding="utf-8") as f:
+                    json.dump(payload, f, indent=2, ensure_ascii=False)
+            except Exception as exc:
+                print(f"Token index save skipped. Reason: {exc}", file=sys.stderr)
+
+        self.token_doc_freq = {token: len(postings) for token, postings in self.token_postings.items()}
 
     def _build_bm25_index(self) -> None:
         for row in self.metadata:
@@ -586,6 +946,7 @@ class Retriever:
             chunk_index=int(meta.get("chunk_index", -1)),
             distance=float(distance),
             score=float(score),
+            section=str(meta.get("section", "")),
         )
 
     def _bm25_score_doc(self, query_tokens: List[str], doc_id: int) -> float:
@@ -694,12 +1055,201 @@ class Retriever:
             for doc_id, score in ranked[: max(top_k, TOP_K) * limit_multiplier]
         ]
 
+    def _postings_search(self, query: str, top_k: int) -> List[SearchResult]:
+        q_tokens = expanded_query_terms(query, intents=infer_query_intents(query), label_hints=extract_query_labels(query))
+        if not q_tokens:
+            return []
+        q_token_set = set(q_tokens)
+        n_docs = max(1, len(self.metadata))
+        doc_scores: Dict[int, float] = defaultdict(float)
+        q_phrase = query.lower().strip()
+
+        for token in q_tokens:
+            postings = self.token_postings.get(token)
+            if not postings:
+                continue
+            df = max(1, self.token_doc_freq.get(token, len(postings)))
+            idf = math.log(1 + (n_docs - df + 0.5) / (df + 0.5))
+            for doc_id, freq in postings:
+                doc_scores[doc_id] += idf * (1.0 + math.log1p(freq))
+
+        if not doc_scores:
+            return []
+
+        ranked: List[Tuple[int, float]] = []
+        for doc_id, score in doc_scores.items():
+            row = self.metadata[doc_id]
+            meta = row.get("metadata", {})
+            text_lower = str(row.get("text", "")).lower()
+            title_lower = str(meta.get("title", "")).lower()
+            section_lower = str(meta.get("section", "")).lower()
+            title_tokens = set(query_terms(title_lower))
+            section_tokens = set(query_terms(section_lower))
+            if q_phrase and q_phrase in text_lower:
+                score += 3.5
+            if q_phrase and q_phrase in title_lower:
+                score += 1.8
+            title_overlap = len(q_token_set & title_tokens)
+            section_overlap = len(q_token_set & section_tokens)
+            score += title_overlap * 0.9
+            score += section_overlap * 1.2
+            if score > 0:
+                ranked.append((doc_id, score))
+
+        ranked.sort(key=lambda item: item[1], reverse=True)
+        limit = max(top_k, TOP_K) * POSTINGS_CANDIDATE_MULTIPLIER
+        return [
+            self._result_from_doc(doc_id, score, distance=1.0 / (score + 1.0))
+            for doc_id, score in ranked[:limit]
+        ]
+
+    def _merge_lexical_results(
+        self,
+        bm25_results: List[SearchResult],
+        postings_results: List[SearchResult],
+        candidate_limit: int,
+    ) -> List[SearchResult]:
+        if not postings_results:
+            return bm25_results[:candidate_limit]
+        merged_scores: Dict[int, float] = defaultdict(float)
+        best_distance: Dict[int, float] = {}
+
+        for rank, result in enumerate(bm25_results):
+            merged_scores[result.doc_id] += result.score + (1.0 / (rank + 1))
+            best_distance[result.doc_id] = result.distance
+
+        for rank, result in enumerate(postings_results):
+            merged_scores[result.doc_id] += (result.score * 1.05) + (1.2 / (rank + 1))
+            if result.doc_id not in best_distance:
+                best_distance[result.doc_id] = result.distance
+            else:
+                best_distance[result.doc_id] = min(best_distance[result.doc_id], result.distance)
+
+        ranked = sorted(merged_scores.items(), key=lambda item: item[1], reverse=True)
+        return [
+            self._result_from_doc(doc_id, score=score, distance=best_distance.get(doc_id, 1.0))
+            for doc_id, score in ranked[:candidate_limit]
+        ]
+
+    def _page_text(self, url: str, max_chunks: int = 12) -> str:
+        doc_ids = self.docs_by_url.get(url, [])
+        if not doc_ids:
+            return ""
+        chunks = [str(self.metadata[doc_id].get("text", "")) for doc_id in doc_ids[:max_chunks]]
+        return "\n".join(chunk for chunk in chunks if chunk).strip()
+
+    def _context_doc_ids_for_result(self, result: SearchResult) -> List[int]:
+        if result.doc_id < 0 or result.doc_id >= len(self.metadata):
+            return [result.doc_id]
+        meta = self.metadata[result.doc_id].get("metadata", {})
+        url = str(meta.get("url", ""))
+        section = str(meta.get("section", "")).strip() or str(meta.get("title", "Untitled"))
+        ordered_ids = self.docs_by_url.get(url, [result.doc_id])
+        if not ordered_ids:
+            return [result.doc_id]
+        position = self.doc_position_by_id.get(result.doc_id, 0)
+        start = max(0, position - SECTION_WINDOW_CHUNKS)
+        end = min(len(ordered_ids), position + SECTION_WINDOW_CHUNKS + 1)
+        selected: List[int] = list(ordered_ids[start:end])
+
+        section_ids = self.docs_by_url_section.get((url, section), [])
+        if section_ids:
+            ranked_section_ids = sorted(
+                section_ids,
+                key=lambda doc_id: abs(self.doc_position_by_id.get(doc_id, 0) - position),
+            )
+            for doc_id in ranked_section_ids:
+                if doc_id not in selected:
+                    selected.append(doc_id)
+                if len(selected) >= SECTION_CONTEXT_MAX_CHUNKS:
+                    break
+
+        selected.sort(key=lambda doc_id: self.doc_position_by_id.get(doc_id, 0))
+        return selected[:SECTION_CONTEXT_MAX_CHUNKS]
+
+    def expand_result_for_context(self, query: str, result: SearchResult) -> SearchResult:
+        query_token_set = set(query_terms(query, for_query=True))
+        doc_ids = self._context_doc_ids_for_result(result)
+        if not doc_ids or any(doc_id < 0 or doc_id >= len(self.metadata) for doc_id in doc_ids):
+            return result
+        sections: List[str] = []
+        token_hits = 0
+
+        for doc_id in doc_ids:
+            chunk_text = str(self.metadata[doc_id].get("text", "")).strip()
+            if not chunk_text:
+                continue
+            sections.append(chunk_text)
+            if query_token_set:
+                token_hits += len(query_token_set & set(query_terms(chunk_text)))
+
+        expanded_text = "\n".join(sections).strip()
+        if not expanded_text:
+            expanded_text = result.text
+
+        # If the local section window has weak lexical overlap, include a larger
+        # page slice so LLM has enough surrounding context to answer safely.
+        if query_token_set and token_hits < max(1, len(query_token_set) // 3):
+            page_text = self._page_text(result.url)
+            if page_text:
+                expanded_text = page_text
+
+        return SearchResult(
+            doc_id=result.doc_id,
+            text=expanded_text,
+            url=result.url,
+            title=result.title,
+            chunk_index=result.chunk_index,
+            distance=result.distance,
+            score=result.score,
+            section=result.section,
+        )
+
+    def find_supporting_results(self, query: str, answer: str, limit: int = TOP_K) -> List[SearchResult]:
+        if not answer.strip():
+            return []
+        query_tokens = set(query_terms(query, for_query=True))
+        answer_tokens = set(query_terms(answer))
+        answer_anchors = _extract_fact_anchors(answer)
+        ranked: List[Tuple[int, float]] = []
+
+        for doc_id, row in enumerate(self.metadata):
+            meta = row.get("metadata", {})
+            combined = " ".join(
+                [
+                    str(meta.get("title", "")),
+                    str(meta.get("section", "")),
+                    str(row.get("text", "")),
+                ]
+            )
+            combined_tokens = set(query_terms(combined))
+            if not combined_tokens:
+                continue
+
+            score = 0.0
+            score += len(answer_tokens & combined_tokens) * 1.8
+            score += len(query_tokens & combined_tokens) * 1.1
+
+            combined_anchors = _extract_fact_anchors(combined)
+            for key in ("labels", "dates", "times", "weekdays", "emails", "rooms"):
+                score += len(answer_anchors[key] & combined_anchors[key]) * 2.2
+
+            if score <= 0.0:
+                continue
+            ranked.append((doc_id, score))
+
+        ranked.sort(key=lambda item: item[1], reverse=True)
+        return [
+            self._result_from_doc(doc_id, score=score, distance=1.0 / (score + 1.0))
+            for doc_id, score in ranked[: max(1, limit)]
+        ]
+
     def _dense_search(self, query: str, top_k: int) -> List[SearchResult]:
         if self.index is None or self.model is None:
             return []
 
         q_vec = self.model.encode([query], convert_to_numpy=True).astype("float32")
-        distances, indices = self.index.search(q_vec, max(top_k, TOP_K) * 4)
+        distances, indices = self.index.search(q_vec, max(top_k, TOP_K))
         results: List[SearchResult] = []
         for distance, doc_id in zip(distances[0], indices[0]):
             if doc_id < 0 or doc_id >= len(self.metadata):
@@ -708,15 +1258,14 @@ class Retriever:
             results.append(self._result_from_doc(doc_id, dense_score, float(distance)))
         return results
 
-    def search(self, query: str, top_k: int = TOP_K) -> List[SearchResult]:
-        lexical_results = self._bm25_search(query, top_k)
-        if self.index is None or self.model is None:
-            return lexical_results[:top_k]
-
-        dense_results = self._dense_search(query, top_k)
+    def _fuse_results(
+        self,
+        lexical_results: List[SearchResult],
+        dense_results: List[SearchResult],
+        candidate_limit: int,
+    ) -> List[SearchResult]:
         if not dense_results:
-            return lexical_results[:top_k]
-
+            return lexical_results[:candidate_limit]
         fused_scores: Dict[int, float] = defaultdict(float)
         best_distance: Dict[int, float] = {}
 
@@ -734,8 +1283,109 @@ class Retriever:
         ranked = sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)
         return [
             self._result_from_doc(doc_id, score=fused_score, distance=best_distance.get(doc_id, 1.0))
-            for doc_id, fused_score in ranked[:top_k]
+            for doc_id, fused_score in ranked[:candidate_limit]
         ]
+
+    def _semantic_rerank_scores(self, query: str, candidates: List[SearchResult]) -> Dict[int, float]:
+        if self.model is None or not candidates:
+            return {}
+        try:
+            candidate_texts = [
+                f"{result.title}\n{result.text[:900]}".strip()
+                for result in candidates
+            ]
+            vectors = self.model.encode([query] + candidate_texts, convert_to_numpy=False)
+            if not vectors or len(vectors) != len(candidate_texts) + 1:
+                return {}
+            query_vector = list(vectors[0])
+            scores: Dict[int, float] = {}
+            for result, doc_vector in zip(candidates, vectors[1:]):
+                scores[result.doc_id] = cosine_similarity(query_vector, list(doc_vector))
+            return scores
+        except Exception:
+            return {}
+
+    def _rerank_results(self, query: str, candidates: List[SearchResult], top_k: int) -> List[SearchResult]:
+        if not candidates:
+            return []
+
+        intents = infer_query_intents(query)
+        label_hints = extract_query_labels(query)
+        label_targets = query_label_targets(label_hints)
+        strict_prefixes = strict_single_label_prefixes(label_targets)
+        query_token_set = set(expanded_query_terms(query, intents=intents, label_hints=label_hints))
+        if not query_token_set:
+            query_token_set = set(query_terms(query, for_query=True))
+        semantic_scores = self._semantic_rerank_scores(query, candidates)
+        query_lower = query.lower().strip()
+
+        reranked: List[Tuple[float, SearchResult]] = []
+        for rank, result in enumerate(candidates):
+            combined_text = f"{result.title}\n{result.text}"
+            combined_lower = combined_text.lower()
+            doc_token_set = set(query_terms(combined_text))
+
+            overlap = len(query_token_set & doc_token_set)
+            coverage = overlap / max(1, len(query_token_set))
+            phrase_hit = 1.0 if query_lower and len(query_lower) >= 6 and query_lower in combined_lower else 0.0
+
+            score = (
+                result.score * 0.35
+                + overlap * 1.25
+                + coverage * 4.5
+                + phrase_hit * 2.2
+            )
+            score += semantic_scores.get(result.doc_id, 0.0) * RERANK_SEMANTIC_WEIGHT
+
+            if label_targets:
+                exact_line_hits = 0
+                conflict_only_hits = 0
+                for raw_line in result.text.splitlines():
+                    line = normalize_line(raw_line).strip().lower()
+                    if not line:
+                        continue
+                    has_exact_label, has_conflicting_label = line_label_alignment(line, label_targets)
+                    has_prefix_conflict = line_has_prefix_conflict(line, label_targets, strict_prefixes)
+                    if has_exact_label and not has_prefix_conflict:
+                        exact_line_hits += 1
+                    elif has_conflicting_label or has_prefix_conflict:
+                        conflict_only_hits += 1
+
+                if exact_line_hits > 0:
+                    score += 6.0 + min(2.0, exact_line_hits * 0.4)
+                elif conflict_only_hits > 0:
+                    score -= 3.5
+
+            if intents["wants_time"] and (DATE_PATTERN.search(combined_lower) or TIME_PATTERN.search(combined_lower)):
+                score += 1.1
+            if intents["wants_location"] and any(word in combined_lower for word in LOCATION_HINTS):
+                score += 1.0
+            if intents["wants_staff"] and any(word in combined_lower for word in STAFF_HINTS):
+                score += 1.0
+            if intents["wants_assignments"] and any(word in combined_lower for word in ASSIGNMENT_HINTS):
+                score += 0.8
+
+            score += max(0.0, 0.8 - rank * 0.06)
+            reranked.append((score, result))
+
+        reranked.sort(key=lambda item: item[0], reverse=True)
+        return [
+            self._result_from_doc(result.doc_id, score=score, distance=result.distance)
+            for score, result in reranked[: max(top_k, TOP_K)]
+        ]
+
+    def search(self, query: str, top_k: int = TOP_K) -> List[SearchResult]:
+        candidate_limit = max(top_k, TOP_K) * RERANK_CANDIDATE_MULTIPLIER
+        bm25_results = self._bm25_search(query, candidate_limit)
+        postings_results = self._postings_search(query, candidate_limit)
+        lexical_results = self._merge_lexical_results(bm25_results, postings_results, candidate_limit)
+        lexical_candidates = lexical_results[:candidate_limit]
+        if self.index is None or self.model is None:
+            return self._rerank_results(query, lexical_candidates, top_k)
+
+        dense_results = self._dense_search(query, candidate_limit)
+        fused_candidates = self._fuse_results(lexical_candidates, dense_results, candidate_limit)
+        return self._rerank_results(query, fused_candidates, top_k)
 
 
 def collect_evidence(query: str, results: List[SearchResult]) -> EvidenceSelection:
@@ -918,19 +1568,11 @@ def _format_canonical_label(label: str) -> str:
     return f"{label[0].upper()}{label[1:]}"
 
 
-def _label_sort_key(label: str) -> Tuple[int, int]:
-    if label.startswith("c"):
-        return (0, int(label[1:]))
-    if label.startswith("p"):
-        return (1, int(label[1:]))
-    if label.startswith("r"):
-        return (2, int(label[1:]))
-    if label.startswith("quiz"):
-        return (3, int(label[4:]))
-    return (4, 0)
-
-
-def build_deterministic_label_answer(query: str, selection: EvidenceSelection) -> Optional[str]:
+def build_deterministic_label_answer(
+    query: str,
+    selection: EvidenceSelection,
+    results: Optional[List[SearchResult]] = None,
+) -> Optional[str]:
     if not selection.lines:
         return None
 
@@ -1034,6 +1676,50 @@ def build_deterministic_label_answer(query: str, selection: EvidenceSelection) -
                 assignment_seen.add(canonical)
                 assignment_labels.append(canonical)
 
+    if results and target_prefix in {"c", "p"} and (assignment_name is None or fallback_label_line is None):
+        for result in results[: max(TOP_K * 2, 10)]:
+            for raw_line in result.text.splitlines():
+                line = normalize_line(raw_line).strip("# ").strip()
+                if not line:
+                    continue
+                has_exact, _ = line_label_alignment(line, target_only)
+                if not has_exact:
+                    continue
+                if line_has_prefix_conflict(line, target_only, strict_prefixes):
+                    continue
+                line_lower = line.lower()
+                if target_prefix in {"c", "p"} and "resub" in line_lower and "i.s." not in line_lower:
+                    continue
+                if fallback_label_line is None:
+                    fallback_label_line = line
+                if assignment_name is None:
+                    label_upper = target_label.upper()
+                    name_match = re.search(
+                        rf"\b{re.escape(label_upper)}\b\s*(?:-\s*)?(.+?)\s+i\.s\.",
+                        line,
+                        flags=re.IGNORECASE,
+                    )
+                    if name_match:
+                        candidate_name = name_match.group(1).strip(" -:")
+                        invalid_name = (
+                            not candidate_name
+                            or "resub" in candidate_name.lower()
+                            or candidate_name.startswith(",")
+                            or re.search(r"\b[cp]\s*0?\d+\b", candidate_name, flags=re.IGNORECASE) is not None
+                        )
+                        if not invalid_name:
+                            assignment_name = candidate_name
+                    else:
+                        list_match = re.search(rf"\b{re.escape(label_upper)}\b\s*-\s*(.+)$", line, flags=re.IGNORECASE)
+                        if list_match:
+                            candidate_name = list_match.group(1).strip(" -:")
+                            if candidate_name and "resub" not in candidate_name.lower():
+                                assignment_name = candidate_name
+                if assignment_name is not None and fallback_label_line is not None:
+                    break
+            if assignment_name is not None and fallback_label_line is not None:
+                break
+
     if not due_time and not assignment_labels and not assignment_name:
         return None
 
@@ -1054,6 +1740,186 @@ def build_deterministic_label_answer(query: str, selection: EvidenceSelection) -
     return " ".join(parts)
 
 
+def _iter_metadata_lines(metadata: List[dict]) -> List[str]:
+    lines: List[str] = []
+    for row in metadata:
+        text = row.get("text", "")
+        if not isinstance(text, str):
+            continue
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if line:
+                lines.append(line)
+    return lines
+
+
+def _format_day_list(days: List[str]) -> str:
+    if not days:
+        return ""
+    if len(days) == 1:
+        return days[0]
+    if len(days) == 2:
+        return f"{days[0]} and {days[1]}"
+    return ", ".join(days[:-1]) + f", and {days[-1]}"
+
+
+def _extract_quiz_number(query: str) -> Optional[int]:
+    q = query.lower()
+    match = re.search(r"\bquiz\s*0?(\d+)\b", q)
+    if match:
+        return int(match.group(1))
+
+    match = re.search(r"\b(\d+)(?:st|nd|rd|th)\s+quiz\b", q)
+    if match:
+        return int(match.group(1))
+    match = re.search(r"\bquiz\s+(\d+)(?:st|nd|rd|th)\b", q)
+    if match:
+        return int(match.group(1))
+
+    for word, number in ORDINAL_WORD_TO_INT.items():
+        if f"{word} quiz" in q or f"quiz {word}" in q:
+            return number
+    return None
+
+
+def _answer_named_item_from_lines(target: str, lines: List[str]) -> Optional[str]:
+    for raw_line in lines:
+        if target not in raw_line.lower():
+            continue
+        line = normalize_line(raw_line).strip("# ").strip()
+        if not line:
+            continue
+        release_match = RELEASED_ASSIGNMENT_PATTERN.search(line)
+        if release_match:
+            label = release_match.group(1).lower()
+            title = release_match.group(2).strip(" -:")
+            due = release_match.group(3).strip(" -:.")
+            return f"{title} is {_format_canonical_label(label)}. It is due by {due}."
+        return line
+    return None
+
+
+def build_deterministic_fact_answer(
+    query: str,
+    results: List[SearchResult],
+    metadata: List[dict],
+) -> Optional[str]:
+    q = query.lower().strip()
+    metadata_lines = _iter_metadata_lines(metadata)
+    day_order = {"Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3, "Fri": 4}
+    day_full = {
+        "Mon": "Monday",
+        "Tue": "Tuesday",
+        "Wed": "Wednesday",
+        "Thu": "Thursday",
+        "Fri": "Friday",
+    }
+
+    asks_instructor = (
+        ("instructor" in q or "professor" in q or "who teaches" in q or "teacher" in q)
+        and "office hour" not in q
+        and "ta" not in q
+    )
+    if asks_instructor:
+        name = None
+        email = None
+        for line in metadata_lines:
+            if name is None:
+                match = INSTRUCTOR_LINE_PATTERN.search(line)
+                if match:
+                    name = match.group(1).strip()
+            if email is None and "instructor" in line.lower():
+                match = EMAIL_PATTERN.search(line)
+                if match:
+                    email = match.group(0)
+            if name and email:
+                break
+        if name:
+            answer = f"The instructor is {name}."
+            if email:
+                answer += f" Instructor email: {email}."
+            return answer
+
+    asks_lecture_schedule = (
+        "lecture" in q
+        and any(word in q for word in ("when", "where", "time", "schedule", "day"))
+    )
+    if asks_lecture_schedule:
+        day_counts: Counter = Counter()
+        location_line = None
+        for line in metadata_lines:
+            for day_match in LECTURE_DAY_PATTERN.finditer(line):
+                day_counts[day_match.group(1).title()] += 1
+            if location_line is None:
+                location_match = LECTURE_LOCATION_LINE_PATTERN.search(line)
+                if location_match:
+                    location_line = normalize_line(location_match.group(0)).strip(" _")
+
+        if day_counts or location_line:
+            ordered_by_freq = sorted(day_counts.keys(), key=lambda day: (-day_counts[day], day_order.get(day, 99)))
+            ordered_days = sorted(ordered_by_freq[:2], key=lambda day: day_order.get(day, 99))
+            full_days = [day_full.get(day, day) for day in ordered_days]
+            parts = []
+            if full_days:
+                parts.append(f"Lectures meet on {_format_day_list(full_days)}.")
+            if location_line:
+                parts.append(f"Lecture times/locations: {location_line}.")
+            return " ".join(parts)
+
+    asks_quiz_time = "quiz" in q and any(word in q for word in ("when", "date", "time", "scheduled"))
+    if asks_quiz_time:
+        quiz_number = _extract_quiz_number(query)
+        if quiz_number is not None:
+            for line in metadata_lines:
+                match = QUIZ_LINE_PATTERN.search(line)
+                if not match:
+                    continue
+                current_quiz = int(match.group(3))
+                if current_quiz != quiz_number:
+                    continue
+                weekday = match.group(1).title()
+                date = match.group(2)
+                return f"Quiz {quiz_number} is on {weekday} {date}."
+
+    asks_esn = "esn" in q or "e/s/n" in q
+    if asks_esn:
+        has_explicit_definitions = any(
+            "e(xcellent)" in line.lower() and "s(atisfactory)" in line.lower() and "n(ot yet)" in line.lower()
+            for line in metadata_lines
+        )
+        if has_explicit_definitions:
+            return "ESN stands for Excellent, Satisfactory, and Not yet."
+
+        has_definition_heading = any("e/s/n grading definitions" in line.lower() for line in metadata_lines)
+        has_esn_usage = any("esn grade" in line.lower() or "total esn" in line.lower() for line in metadata_lines)
+        if has_definition_heading:
+            return (
+                "In this course, ESN refers to the E/S/N grading system. "
+                "See the \"E/S/N Grading Definitions\" section on the Grading Rubrics page."
+            )
+        if has_esn_usage:
+            return "ESN is a grading label used in this course for assignment and quiz assessment."
+
+    asks_named_item = q.startswith("what is ") or q.startswith("what's ")
+    if asks_named_item and not extract_query_labels(query):
+        target = re.sub(r"^what(?:'s|\s+is)\s+", "", q).strip(" ?.!")
+        if target and len(target.split()) >= 2 and not any(
+            blocked in target for blocked in ("instructor", "lecture", "quiz", "policy", "esn")
+        ):
+            metadata_match = _answer_named_item_from_lines(target, metadata_lines)
+            if metadata_match:
+                return metadata_match
+
+            result_lines: List[str] = []
+            for result in results:
+                result_lines.extend(result.text.splitlines())
+            result_match = _answer_named_item_from_lines(target, result_lines)
+            if result_match:
+                return result_match
+
+    return None
+
+
 def _extract_ollama_output_text(payload: dict) -> str:
     text = payload.get("response")
     if isinstance(text, str):
@@ -1061,35 +1927,209 @@ def _extract_ollama_output_text(payload: dict) -> str:
     return ""
 
 
+def extract_source_citations(text: str) -> List[int]:
+    citations: List[int] = []
+    seen = set()
+    for match in SOURCE_CITATION_PATTERN.finditer(text):
+        number = int(match.group(1))
+        if number not in seen:
+            citations.append(number)
+            seen.add(number)
+    return citations
+
+
+def llm_citations_are_valid(text: str, max_source_num: int) -> bool:
+    citations = extract_source_citations(text)
+    if not citations:
+        return False
+    return all(1 <= number <= max_source_num for number in citations)
+
+
+def _strip_source_citations(text: str) -> str:
+    return SOURCE_CITATION_PATTERN.sub(" ", text)
+
+
+def _normalize_anchor(value: str) -> str:
+    return normalize_line(value).lower()
+
+
+def _extract_fact_anchors(text: str) -> Dict[str, set]:
+    sanitized = _strip_source_citations(text)
+    anchors: Dict[str, set] = {
+        "labels": set(),
+        "dates": set(),
+        "times": set(),
+        "weekdays": set(),
+        "emails": set(),
+        "rooms": set(),
+    }
+    for label in extract_query_labels(sanitized):
+        canonical = canonicalize_label_token(label)
+        if canonical:
+            anchors["labels"].add(canonical)
+    for match in DATE_PATTERN.finditer(sanitized):
+        anchors["dates"].add(_normalize_anchor(match.group(0)))
+    for match in TIME_PATTERN.finditer(sanitized):
+        anchors["times"].add(_normalize_anchor(match.group(0)))
+    for match in WEEKDAY_PATTERN.finditer(sanitized):
+        anchors["weekdays"].add(_normalize_anchor(match.group(0)))
+    for match in EMAIL_PATTERN.finditer(sanitized):
+        anchors["emails"].add(_normalize_anchor(match.group(0)))
+    for match in ROOM_PATTERN.finditer(sanitized):
+        anchors["rooms"].add(_normalize_anchor(match.group(0)))
+    return anchors
+
+
+def llm_answer_is_grounded(answer: str, context_block: str) -> bool:
+    answer_anchors = _extract_fact_anchors(answer)
+    context_anchors = _extract_fact_anchors(context_block)
+    for key in ("labels", "dates", "times", "weekdays", "emails", "rooms"):
+        if answer_anchors[key] and not answer_anchors[key].issubset(context_anchors[key]):
+            return False
+    return True
+
+
+def llm_answer_conflicts_with_preferred(answer: str, preferred_answer: str) -> bool:
+    preferred_anchors = _extract_fact_anchors(preferred_answer)
+    llm_anchors = _extract_fact_anchors(answer)
+    for key in ("labels", "dates", "times", "emails", "rooms"):
+        required = preferred_anchors[key]
+        offered = llm_anchors[key]
+        if required and offered and not offered.issubset(required):
+            return True
+    return False
+
+
+def llm_source_limit(results: List[SearchResult]) -> int:
+    return min(len(results), LLM_CONTEXT_SOURCE_LIMIT, TOP_K)
+
+
+def _select_llm_context_lines(query: str, result: SearchResult, line_limit: int) -> List[str]:
+    query_tokens = set(query_terms(query, for_query=True))
+    intents = infer_query_intents(query)
+    label_targets = query_label_targets(extract_query_labels(query))
+    strict_prefixes = strict_single_label_prefixes(label_targets)
+    query_lower = query.lower().strip()
+
+    candidates: List[Tuple[float, str]] = []
+    seen = set()
+    for raw_line in result.text.splitlines():
+        line = normalize_line(raw_line).strip("# ").strip()
+        if not line or line in seen:
+            continue
+        seen.add(line)
+
+        score = 0.0
+        line_lower = line.lower()
+        line_tokens = set(query_terms(line))
+        overlap = len(query_tokens & line_tokens)
+        score += overlap * 2.2
+
+        if label_targets:
+            has_exact_label, has_conflicting_label = line_label_alignment(line_lower, label_targets)
+            if has_exact_label:
+                score += 8.0
+            if has_conflicting_label and not has_exact_label:
+                score -= 4.0
+            if line_has_prefix_conflict(line_lower, label_targets, strict_prefixes):
+                score -= 4.5
+
+        if intents["wants_time"] and (DATE_PATTERN.search(line) or TIME_PATTERN.search(line)):
+            score += 1.8
+        if intents["wants_location"] and any(word in line_lower for word in LOCATION_HINTS):
+            score += 1.3
+        if intents["wants_staff"] and any(word in line_lower for word in STAFF_HINTS):
+            score += 1.3
+        if intents["wants_assignments"] and any(word in line_lower for word in ASSIGNMENT_HINTS):
+            score += 1.2
+        if query_lower and len(query_lower) >= 8 and query_lower in line_lower:
+            score += 2.6
+
+        if score > 0:
+            candidates.append((score, line))
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    selected = [line for _, line in candidates[:line_limit]]
+    if selected:
+        return selected
+
+    fallback = normalize_line(result.text)[:LLM_CONTEXT_SNIPPET_CHARS].strip()
+    return [fallback] if fallback else []
+
+
+def _context_results_for_llm(
+    query: str,
+    results: List[SearchResult],
+    retriever: Optional[Retriever] = None,
+) -> List[SearchResult]:
+    limited_results = results[: llm_source_limit(results)]
+    if not retriever:
+        return limited_results
+    expanded: List[SearchResult] = []
+    for result in limited_results:
+        try:
+            expanded.append(retriever.expand_result_for_context(query, result))
+        except Exception:
+            expanded.append(result)
+    return expanded
+
+
+def build_llm_context(
+    query: str,
+    results: List[SearchResult],
+    retriever: Optional[Retriever] = None,
+) -> str:
+    sections: List[str] = []
+    for source_num, result in enumerate(_context_results_for_llm(query, results, retriever), start=1):
+        selected_lines = _select_llm_context_lines(query, result, LLM_CONTEXT_LINES_PER_SOURCE)
+        if not selected_lines:
+            continue
+        bullet_lines = "\n".join(f"- {line}" for line in selected_lines)
+        source_title = result.title
+        if result.section and result.section != result.title:
+            source_title = f"{source_title} / {result.section}"
+        sections.append(
+            f"[source {source_num}] {source_title} - {result.url}\n{bullet_lines}"
+        )
+    return "\n\n".join(sections)
+
+
 def build_llm_answer(
     query: str,
     selection: EvidenceSelection,
     results: List[SearchResult],
+    retriever: Optional[Retriever] = None,
+    preferred_answer: Optional[str] = None,
 ) -> Optional[str]:
     if not ENABLE_LLM_RESPONSE:
         return None
-    if not selection.confident or not selection.lines:
+    if not results:
         return NO_ANSWER_TEXT
 
-    evidence_block = "\n".join(
-        f"[source {source_num}] {line}" for line, source_num in selection.lines
-    )
-    source_meta = "\n".join(
-        f"[source {i}] {r.title} - {r.url}" for i, r in enumerate(results, start=1)
-    )
+    context_block = build_llm_context(query, results, retriever)
+    if not context_block.strip():
+        return NO_ANSWER_TEXT
 
     system_prompt = (
         "You are a helpful CSE 121 course assistant.\n"
-        "Use only the provided evidence lines.\n"
+        "Use only the provided source snippets.\n"
         f"If the evidence is insufficient or ambiguous, reply exactly: {NO_ANSWER_SENTINEL}\n"
-        "If sufficient, answer naturally in 2-4 sentences and cite evidence as [source N]."
+        "If the user question is ambiguous, ask one concise clarification question and stop.\n"
+        "If sufficient, answer naturally in 2-4 sentences and cite evidence as [source N] on the course website.\n"
+        "Do not infer dates, times, names, or policy details unless explicitly present in the snippets."
     )
 
-    user_prompt = (
+    user_parts = [
         f"Question:\n{query}\n\n"
-        f"Evidence lines:\n{evidence_block}\n\n"
-        f"Sources:\n{source_meta}"
-    )
+        f"Snippets from the course website:\n{context_block}"
+    ]
+    if preferred_answer and preferred_answer != NO_ANSWER_TEXT:
+        user_parts.append(
+            "Candidate factual answer from deterministic retrieval rules:\n"
+            f"{preferred_answer}\n\n"
+            "If supported by the snippets, preserve these facts and rewrite clearly."
+        )
+    user_prompt = "\n\n".join(user_parts)
 
     prompt = f"{system_prompt}\n\n{user_prompt}"
     request_body = {
@@ -1097,7 +2137,7 @@ def build_llm_answer(
         "prompt": prompt,
         "stream": False,
         "options": {
-            "temperature": 0.2,
+            "temperature": 0.1,
         },
     }
 
@@ -1118,14 +2158,278 @@ def build_llm_answer(
             return None
         if text.strip() == NO_ANSWER_SENTINEL:
             return NO_ANSWER_TEXT
+        if is_clarification_request(text):
+            return text
+        if LLM_REQUIRE_VALID_CITATIONS:
+            max_source_num = llm_source_limit(results)
+            if not llm_citations_are_valid(text, max_source_num):
+                return None
+        if not llm_answer_is_grounded(text, context_block):
+            return None
+        if preferred_answer and preferred_answer != NO_ANSWER_TEXT:
+            if llm_answer_conflicts_with_preferred(text, preferred_answer):
+                return None
         return text
     except (urlerror.URLError, TimeoutError, ValueError) as exc:
         print(f"Ollama call failed; falling back to extractive answer. Reason: {exc}", file=sys.stderr)
         return None
 
 
+def source_reasons_for_result(query: str, result: SearchResult, evidence_lines: List[str]) -> List[str]:
+    reasons: List[str] = []
+    intents = infer_query_intents(query)
+    label_targets = query_label_targets(extract_query_labels(query))
+    combined = f"{result.title}\n{result.text}"
+    combined_lower = combined.lower()
+
+    if evidence_lines:
+        reasons.append("Contains a supporting line used directly in the answer.")
+
+    if label_targets:
+        has_exact_label, _ = line_label_alignment(combined_lower, label_targets)
+        if has_exact_label:
+            for prefix in ("r", "c", "p", "quiz"):
+                labels = sorted(label_targets.get(prefix, set()))
+                if labels:
+                    reasons.append(f"Matches requested label {_format_canonical_label(labels[0])}.")
+                    break
+
+    if intents["wants_time"] and (DATE_PATTERN.search(combined_lower) or TIME_PATTERN.search(combined_lower)):
+        reasons.append("Includes date/time details relevant to your question.")
+    if intents["wants_location"] and any(word in combined_lower for word in LOCATION_HINTS):
+        reasons.append("Includes location details relevant to your question.")
+    if intents["wants_staff"] and any(word in combined_lower for word in STAFF_HINTS):
+        reasons.append("Includes staff-related details relevant to your question.")
+    if intents["wants_assignments"] and any(word in combined_lower for word in ASSIGNMENT_HINTS):
+        reasons.append("Includes assignment policy/details relevant to your question.")
+
+    if not reasons:
+        reasons.append("Top reranked relevance match for your question.")
+    return reasons[:3]
+
+
+def best_source_snippet(query: str, result: SearchResult, max_chars: int = 220) -> str:
+    lines = _select_llm_context_lines(query, result, line_limit=1)
+    if lines:
+        snippet = lines[0]
+    else:
+        snippet = normalize_line(result.text)
+    snippet = snippet.strip()
+    if len(snippet) <= max_chars:
+        return snippet
+    return snippet[: max_chars - 3].rstrip() + "..."
+
+
+def source_support_score(query: str, answer: str, result: SearchResult) -> float:
+    combined = f"{result.title}\n{result.section}\n{result.text}"
+    combined_tokens = set(query_terms(combined))
+    query_tokens = set(query_terms(query, for_query=True))
+    answer_tokens = set(query_terms(answer))
+    score = 0.0
+    score += len(query_tokens & combined_tokens) * 1.2
+    score += len(answer_tokens & combined_tokens) * 1.6
+
+    answer_anchors = _extract_fact_anchors(answer)
+    result_anchors = _extract_fact_anchors(combined)
+    for key in ("labels", "dates", "times", "weekdays", "emails", "rooms"):
+        score += len(answer_anchors[key] & result_anchors[key]) * 2.4
+
+    query_lower = query.lower()
+    combined_lower = combined.lower()
+    if "instructor" in query_lower and "/staff/" in result.url.lower():
+        score += 2.0
+    if "lecture" in query_lower and "lecture @" in combined_lower:
+        score += 2.0
+    if "quiz" in query_lower and "quiz" in combined_lower:
+        score += 1.6
+    if "esn" in query_lower and "e/s/n" in combined_lower:
+        score += 1.6
+    return score
+
+
+def rank_sources_for_answer(query: str, answer: str, results: List[SearchResult]) -> List[SearchResult]:
+    indexed = list(enumerate(results))
+    indexed.sort(
+        key=lambda item: (source_support_score(query, answer, item[1]), -item[0]),
+        reverse=True,
+    )
+    return [result for _, result in indexed]
+
+
+def build_chat_payload(
+    message: str,
+    retriever: Retriever,
+    memory_manager: Optional[SessionMemoryManager] = None,
+    session_id: Optional[str] = None,
+    include_source_details: bool = DEBUG_SOURCE_DETAILS_DEFAULT,
+) -> Dict[str, Any]:
+    original_message = message.strip()
+    if not original_message:
+        raise ValueError("message is required")
+
+    history = memory_manager.get_turns(session_id) if (memory_manager and ENABLE_SESSION_MEMORY) else []
+    memory_notes: List[str] = []
+    pending_clarification_query = (
+        memory_manager.get_pending_clarification(session_id)
+        if (memory_manager and ENABLE_SESSION_MEMORY and ENABLE_CLARIFICATION_STITCH)
+        else None
+    )
+
+    stitched_query = original_message
+    used_clarification_stitch = False
+    if pending_clarification_query and should_stitch_pending_query(original_message):
+        stitched_query = (
+            f"{pending_clarification_query}\n"
+            f"User clarification:\n{original_message}"
+        )
+        used_clarification_stitch = True
+        memory_notes.append("Applied pending clarification context from previous turn.")
+
+    query_for_search, rewrite_notes, _ = rewrite_query_with_memory(stitched_query, history)
+    memory_notes.extend(rewrite_notes)
+    query_lower = query_for_search.lower()
+    label_targets = query_label_targets(extract_query_labels(query_for_search))
+    wants_name_query = any(
+        phrase in query_lower for phrase in ("what is", "what's", "name", "called", "title")
+    )
+    retrieval_k = TOP_K
+    if wants_name_query:
+        retrieval_k = max(TOP_K, 12)
+
+    results = retriever.search(query_for_search, retrieval_k)
+    selection = collect_evidence(query_for_search, results)
+    label_exact_evidence = has_exact_label_evidence(selection.lines, label_targets)
+
+    deterministic_answer = build_deterministic_label_answer(query_for_search, selection, results)
+    retriever_metadata = getattr(retriever, "metadata", [])
+    deterministic_fact_answer = build_deterministic_fact_answer(
+        query_for_search,
+        results,
+        retriever_metadata,
+    )
+    fallback_mode = "no_answer"
+    fallback_answer = NO_ANSWER_TEXT
+    if deterministic_answer is not None:
+        fallback_answer = deterministic_answer
+        fallback_mode = "deterministic"
+    elif deterministic_fact_answer is not None:
+        fallback_answer = deterministic_fact_answer
+        fallback_mode = "deterministic"
+    elif label_targets:
+        # For explicit label questions, avoid hallucinations by requiring exact
+        # label evidence and returning extractive text only from that evidence.
+        if label_exact_evidence and selection.lines:
+            fallback_answer = build_extractive_answer(selection)
+            fallback_mode = "extractive"
+    elif selection.confident:
+        fallback_answer = build_extractive_answer(selection)
+        fallback_mode = "extractive"
+
+    answer_mode = fallback_mode
+    answer = fallback_answer
+
+    should_attempt_llm = ALWAYS_ATTEMPT_LLM or fallback_mode == "no_answer"
+    if should_attempt_llm:
+        llm_answer = build_llm_answer(
+            query_for_search,
+            selection,
+            results,
+            retriever=retriever,
+            preferred_answer=fallback_answer if fallback_mode != "no_answer" else None,
+        )
+        if llm_answer is not None:
+            if llm_answer == NO_ANSWER_TEXT and fallback_mode != "no_answer":
+                answer = fallback_answer
+                answer_mode = fallback_mode
+            elif is_clarification_request(llm_answer):
+                if fallback_mode != "no_answer":
+                    answer = fallback_answer
+                    answer_mode = fallback_mode
+                else:
+                    answer = llm_answer
+                    answer_mode = "clarification"
+            else:
+                answer = llm_answer
+                answer_mode = "llm" if llm_answer != NO_ANSWER_TEXT else "no_answer"
+
+    evidence_by_doc_id: Dict[int, List[str]] = defaultdict(list)
+    for line, source_num in selection.lines:
+        source_index = source_num - 1
+        if 0 <= source_index < len(results):
+            evidence_by_doc_id[results[source_index].doc_id].append(line)
+
+    sources = []
+    source_results = results[:TOP_K]
+    if answer_mode == "deterministic":
+        support_results: List[SearchResult] = []
+        if hasattr(retriever, "find_supporting_results"):
+            try:
+                support_results = retriever.find_supporting_results(
+                    query_for_search,
+                    answer,
+                    limit=max(TOP_K * 2, 8),
+                )
+            except Exception:
+                support_results = []
+        merged_by_doc_id: Dict[int, SearchResult] = {}
+        for result in support_results + results:
+            if result.doc_id not in merged_by_doc_id:
+                merged_by_doc_id[result.doc_id] = result
+        source_results = rank_sources_for_answer(
+            query_for_search,
+            answer,
+            list(merged_by_doc_id.values()),
+        )[:TOP_K]
+    for rank, result in enumerate(source_results, start=1):
+        evidence_lines = evidence_by_doc_id.get(result.doc_id, [])
+        source_payload = {
+            "rank": rank,
+            "title": result.title,
+            "url": result.url,
+            "chunk_index": result.chunk_index,
+            "section": result.section,
+            "distance": round(result.distance, 4),
+            "score": round(result.score, 4),
+            "snippet": best_source_snippet(query_for_search, result),
+        }
+        if include_source_details:
+            source_payload["why"] = source_reasons_for_result(query_for_search, result, evidence_lines)
+            source_payload["evidence"] = evidence_lines[:2]
+        sources.append(source_payload)
+
+    if memory_manager and ENABLE_SESSION_MEMORY:
+        if answer_mode == "clarification":
+            pending_query = pending_clarification_query or original_message
+            memory_manager.set_pending_clarification(session_id, pending_query)
+        else:
+            memory_manager.clear_pending_clarification(session_id)
+        memory_manager.add_turn(
+            session_id,
+            ConversationTurn(
+                query=original_message,
+                answer=answer,
+                labels=canonical_labels_from_query(query_for_search),
+            ),
+        )
+
+    payload: Dict[str, Any] = {
+        "answer": answer,
+        "sources": sources,
+        "answer_mode": answer_mode,
+        "confidence": round(selection.top_score, 3),
+    }
+    if memory_notes:
+        payload["memory_applied"] = memory_notes
+    if used_clarification_stitch or query_for_search != original_message:
+        payload["query_used"] = query_for_search
+    if answer_mode == "clarification":
+        payload["needs_clarification"] = True
+    return payload
+
+
 class ChatHandler(BaseHTTPRequestHandler):
     retriever: Retriever = None  # set at startup
+    memory: SessionMemoryManager = SessionMemoryManager()
 
     def _send_json(self, payload: dict, status: int = HTTPStatus.OK) -> None:
         raw = json.dumps(payload).encode("utf-8")
@@ -1181,55 +2485,22 @@ class ChatHandler(BaseHTTPRequestHandler):
         if not message:
             self._send_json({"error": "message is required"}, HTTPStatus.BAD_REQUEST)
             return
+        raw_session_id = str(payload.get("session_id", "")).strip()
+        session_id = raw_session_id[:80] if raw_session_id else None
+        include_source_details = DEBUG_SOURCE_DETAILS_DEFAULT or bool(payload.get("debug", False))
 
-        results = self.retriever.search(message, TOP_K)
-        selection = collect_evidence(message, results)
-        label_targets = query_label_targets(extract_query_labels(message))
-        label_exact_evidence = has_exact_label_evidence(selection.lines, label_targets)
-        answer_mode = "no_answer"
-        answer = NO_ANSWER_TEXT
-
-        deterministic_answer = build_deterministic_label_answer(message, selection)
-        if deterministic_answer is not None:
-            answer = deterministic_answer
-            answer_mode = "deterministic"
-        elif label_targets:
-            # For explicit label questions, avoid hallucinations by requiring exact
-            # label evidence and returning extractive text only from that evidence.
-            if label_exact_evidence and selection.lines:
-                answer = build_extractive_answer(selection)
-                answer_mode = "extractive"
-        elif selection.confident:
-            llm_answer = build_llm_answer(message, selection, results)
-            if llm_answer is not None:
-                answer = llm_answer
-                answer_mode = "llm" if llm_answer != NO_ANSWER_TEXT else "no_answer"
-            else:
-                answer = build_extractive_answer(selection)
-                answer_mode = "extractive"
-
-        sources = []
-        for rank, r in enumerate(results, start=1):
-            sources.append(
-                {
-                    "rank": rank,
-                    "title": r.title,
-                    "url": r.url,
-                    "chunk_index": r.chunk_index,
-                    "distance": round(r.distance, 4),
-                    "score": round(r.score, 4),
-                    "snippet": r.text[:220].strip(),
-                }
+        try:
+            response = build_chat_payload(
+                message=message,
+                retriever=self.retriever,
+                memory_manager=self.memory,
+                session_id=session_id,
+                include_source_details=include_source_details,
             )
-
-        self._send_json(
-            {
-                "answer": answer,
-                "sources": sources,
-                "answer_mode": answer_mode,
-                "confidence": round(selection.top_score, 3),
-            }
-        )
+        except ValueError as exc:
+            self._send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+            return
+        self._send_json(response)
 
     def log_message(self, fmt: str, *args) -> None:
         return
@@ -1238,6 +2509,7 @@ class ChatHandler(BaseHTTPRequestHandler):
 def main() -> None:
     retriever = Retriever()
     ChatHandler.retriever = retriever
+    ChatHandler.memory = SessionMemoryManager()
 
     host = "127.0.0.1"
     port = 8000

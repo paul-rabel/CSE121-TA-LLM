@@ -414,6 +414,14 @@
         gap: 7px;
       }
 
+      .source-card {
+        flex: 1 1 100%;
+        border: 1px solid var(--source-border);
+        background: var(--source-bg);
+        border-radius: 10px;
+        padding: 6px 8px;
+      }
+
       .source-pill {
         display: inline-flex;
         align-items: center;
@@ -421,10 +429,26 @@
         text-decoration: none;
         color: var(--source-text);
         font-size: 12px;
-        padding: 5px 9px;
+        padding: 4px 8px;
         border-radius: 999px;
         border: 1px solid var(--source-border);
-        background: var(--source-bg);
+        background: transparent;
+      }
+
+      .source-why {
+        margin-top: 6px;
+        font-size: 12px;
+        color: var(--text-muted);
+      }
+
+      .source-evidence {
+        margin-top: 5px;
+        padding: 6px 8px;
+        border-left: 2px solid var(--source-border);
+        background: rgba(255, 255, 255, 0.03);
+        color: var(--source-text);
+        font-size: 12px;
+        line-height: 1.35;
       }
 
       form {
@@ -896,9 +920,33 @@
       const themeToggleEl = document.getElementById("theme-toggle");
       const themeToggleLabelEl = document.getElementById("theme-toggle-label");
       const THEME_KEY = "tai-theme";
+      const SESSION_KEY = "tai-session-id";
       const prefersReducedMotion =
         typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       let themeFadeTimeout = null;
+
+      function createSessionId() {
+        if (window.crypto && typeof window.crypto.randomUUID === "function") {
+          return window.crypto.randomUUID();
+        }
+        return `session-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+      }
+
+      function getOrCreateSessionId() {
+        try {
+          const existing = localStorage.getItem(SESSION_KEY);
+          if (existing) {
+            return existing;
+          }
+          const generated = createSessionId();
+          localStorage.setItem(SESSION_KEY, generated);
+          return generated;
+        } catch (err) {
+          return createSessionId();
+        }
+      }
+
+      const sessionId = getOrCreateSessionId();
 
       function getInitialTheme() {
         let storedTheme = null;
@@ -999,7 +1047,33 @@
               const rank = s.rank ? `S${s.rank}` : "S";
               const title = s.title || "Untitled";
               a.textContent = `${rank} ${title}`;
-              src.appendChild(a);
+              const hasWhy = Array.isArray(s.why) && s.why.length > 0;
+              const hasEvidence = Array.isArray(s.evidence) && s.evidence.length > 0;
+
+              if (!hasWhy && !hasEvidence) {
+                src.appendChild(a);
+                return;
+              }
+
+              const card = document.createElement("div");
+              card.className = "source-card";
+              card.appendChild(a);
+
+              if (hasWhy) {
+                const why = document.createElement("div");
+                why.className = "source-why";
+                why.textContent = s.why.slice(0, 2).join(" ");
+                card.appendChild(why);
+              }
+
+              if (hasEvidence) {
+                const evidence = document.createElement("div");
+                evidence.className = "source-evidence";
+                evidence.textContent = s.evidence[0];
+                card.appendChild(evidence);
+              }
+
+              src.appendChild(card);
             });
 
             msg.appendChild(src);
@@ -1018,7 +1092,7 @@
           const res = await fetch("/api/chat", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ message })
+            body: JSON.stringify({ message, session_id: sessionId })
           });
 
           const data = await res.json();

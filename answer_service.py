@@ -256,6 +256,17 @@ def extract_query_labels(query: str) -> List[str]:
         labels.append(f"r{number:02d}")
         labels.append(f"resub {number}")
 
+    # Handle natural phrasing like "project 0" / "checkpoint 2".
+    for match in re.finditer(r"\bproject\s*0?(\d+)\b", q):
+        number = int(match.group(1))
+        labels.append(f"p{number}")
+        labels.append(f"p{number:02d}")
+
+    for match in re.finditer(r"\bcheckpoint\s*0?(\d+)\b", q):
+        number = int(match.group(1))
+        labels.append(f"c{number}")
+        labels.append(f"c{number:02d}")
+
     # Preserve order while deduplicating.
     return list(dict.fromkeys(labels))
 
@@ -338,6 +349,20 @@ def line_has_prefix_conflict(line: str, label_targets: Dict[str, set], strict_pr
     return False
 
 
+def has_exact_label_evidence(lines: List[Tuple[str, int]], label_targets: Dict[str, set]) -> bool:
+    if not lines or not label_targets:
+        return False
+    strict_prefixes = strict_single_label_prefixes(label_targets)
+    for line, _ in lines:
+        has_exact_label, _ = line_label_alignment(line, label_targets)
+        if not has_exact_label:
+            continue
+        if line_has_prefix_conflict(line, label_targets, strict_prefixes):
+            continue
+        return True
+    return False
+
+
 def expanded_query_terms(
     query: str,
     intents: Optional[Dict[str, bool]] = None,
@@ -393,7 +418,6 @@ def score_line(
     query_tokens: set,
     intents: Dict[str, bool],
     rank_bias: float,
-    label_hints: List[str],
     label_targets: Dict[str, set],
     strict_prefixes: set,
 ) -> float:
@@ -475,9 +499,6 @@ def score_line(
             score -= 1.5
         if line_has_prefix_conflict(line_lower, label_targets, strict_prefixes):
             score -= 8.0
-
-    if label_hints and any(label in line_lower for label in label_hints):
-        score += 3.0
 
     if intents["wants_time"] and not (DATE_PATTERN.search(line) or TIME_PATTERN.search(line) or any(w in line_lower for w in TIME_HINTS)):
         score -= 1.0
@@ -585,6 +606,8 @@ class Retriever:
     def _bm25_search(self, query: str, top_k: int) -> List[SearchResult]:
         intents = infer_query_intents(query)
         label_hints = extract_query_labels(query)
+        label_targets = query_label_targets(label_hints)
+        strict_prefixes = strict_single_label_prefixes(label_targets)
         q_tokens = expanded_query_terms(query, intents=intents, label_hints=label_hints)
         if not q_tokens:
             return []
@@ -594,12 +617,11 @@ class Retriever:
 
         for doc_id, row in enumerate(self.metadata):
             score = self._bm25_score_doc(q_tokens, doc_id)
-            if score <= 0:
-                continue
 
             text_lower = row.get("text", "").lower()
             title_lower = row.get("metadata", {}).get("title", "").lower()
             url_lower = row.get("metadata", {}).get("url", "").lower()
+            combined_lower = f"{title_lower}\n{text_lower}"
 
             if q_phrase and q_phrase in text_lower:
                 score += 4.0
@@ -607,15 +629,18 @@ class Retriever:
                 score += 2.0
             if DATE_PATTERN.search(q_phrase) and DATE_PATTERN.search(text_lower):
                 score += 1.0
-            if label_hints and any(label in text_lower for label in label_hints):
-                score += 4.0
-            if label_hints and any(label in title_lower for label in label_hints):
-                score += 1.5
-            if label_hints and not (
-                any(label in text_lower for label in label_hints)
-                or any(label in title_lower for label in label_hints)
-            ):
-                score -= 1.5
+            if label_targets:
+                has_exact_label, has_conflicting_label = line_label_alignment(combined_lower, label_targets)
+                if has_exact_label:
+                    score += 6.0
+                else:
+                    score -= 1.8
+                if has_conflicting_label and not has_exact_label:
+                    score -= 7.0
+                elif has_conflicting_label and has_exact_label:
+                    score -= 1.5
+                if line_has_prefix_conflict(combined_lower, label_targets, strict_prefixes):
+                    score -= 8.0
             if intents["wants_staff"]:
                 if "/staff/" in url_lower:
                     score += 5.0
@@ -657,13 +682,16 @@ class Retriever:
                     score += 1.5
                 if not intents["wants_policy"] and "resub" in text_lower:
                     score -= 0.8
+            if score <= 0:
+                continue
 
             ranked.append((doc_id, score))
 
         ranked.sort(key=lambda x: x[1], reverse=True)
+        limit_multiplier = 6 if label_targets else 4
         return [
             self._result_from_doc(doc_id, score, distance=1.0 / (score + 1.0))
-            for doc_id, score in ranked[: max(top_k, TOP_K) * 4]
+            for doc_id, score in ranked[: max(top_k, TOP_K) * limit_multiplier]
         ]
 
     def _dense_search(self, query: str, top_k: int) -> List[SearchResult]:
@@ -737,7 +765,6 @@ def collect_evidence(query: str, results: List[SearchResult]) -> EvidenceSelecti
                 query_token_set,
                 intents,
                 rank_bias,
-                label_hints,
                 label_targets,
                 strict_prefixes,
             )
@@ -827,13 +854,9 @@ def collect_evidence(query: str, results: List[SearchResult]) -> EvidenceSelecti
         confident = confident and token_coverage >= MIN_QUERY_TOKEN_COVERAGE
 
     # If user asked about a specific label (Quiz 1, P2, C3, etc),
-    # require at least one selected line to include the same label.
-    if label_hints:
-        label_match = any(
-            any(label in line.lower() for label in label_hints)
-            for line, _ in lines
-        )
-        confident = confident and label_match
+    # require at least one selected line to match the same canonical label.
+    if label_targets:
+        confident = confident and has_exact_label_evidence(lines, label_targets)
 
     if intents["wants_time"]:
         has_time_evidence = any(
@@ -916,7 +939,11 @@ def build_deterministic_label_answer(query: str, selection: EvidenceSelection) -
     wants_eligible = any(
         word in query_lower for word in ("eligible", "submit", "submission", "assignments", "assignment")
     )
-    if not (wants_due or wants_eligible):
+    wants_name = any(
+        phrase in query_lower
+        for phrase in ("what is", "what's", "name", "called", "assignment", "project", "title")
+    )
+    if not (wants_due or wants_eligible or wants_name):
         return None
 
     targets = query_label_targets(extract_query_labels(query))
@@ -946,10 +973,7 @@ def build_deterministic_label_answer(query: str, selection: EvidenceSelection) -
     assignment_labels: List[str] = []
     assignment_seen = set()
     assignment_name = None
-
-    wants_name = any(
-        phrase in query_lower for phrase in ("what is", "name", "called", "assignment", "project", "title")
-    )
+    fallback_label_line = None
 
     for line, _ in selection.lines:
         has_exact, _ = line_label_alignment(line, target_only)
@@ -957,6 +981,8 @@ def build_deterministic_label_answer(query: str, selection: EvidenceSelection) -
             continue
         if line_has_prefix_conflict(line, target_only, strict_prefixes):
             continue
+        if fallback_label_line is None:
+            fallback_label_line = line
         line_lower = line.lower()
         if target_prefix in {"c", "p"} and "resub" in line_lower and "i.s." not in line_lower:
             # Avoid treating resub-cycle lines as the canonical assignment definition.
@@ -1014,6 +1040,9 @@ def build_deterministic_label_answer(query: str, selection: EvidenceSelection) -
     parts = []
     if target_prefix in {"c", "p"} and wants_name and assignment_name:
         parts.append(f"{target_display} is {assignment_name}.")
+    elif target_prefix in {"c", "p"} and wants_name and fallback_label_line:
+        clipped = fallback_label_line if len(fallback_label_line) <= 200 else fallback_label_line[:197] + "..."
+        parts.append(f"{target_display}: {clipped}")
     if wants_due and due_time:
         parts.append(f"{target_display} is due by {due_time}.")
     if target_prefix == "r" and wants_eligible and assignment_labels:
@@ -1155,22 +1184,29 @@ class ChatHandler(BaseHTTPRequestHandler):
 
         results = self.retriever.search(message, TOP_K)
         selection = collect_evidence(message, results)
+        label_targets = query_label_targets(extract_query_labels(message))
+        label_exact_evidence = has_exact_label_evidence(selection.lines, label_targets)
         answer_mode = "no_answer"
         answer = NO_ANSWER_TEXT
 
-        if selection.confident:
-            deterministic_answer = build_deterministic_label_answer(message, selection)
-            if deterministic_answer is not None:
-                answer = deterministic_answer
-                answer_mode = "deterministic"
+        deterministic_answer = build_deterministic_label_answer(message, selection)
+        if deterministic_answer is not None:
+            answer = deterministic_answer
+            answer_mode = "deterministic"
+        elif label_targets:
+            # For explicit label questions, avoid hallucinations by requiring exact
+            # label evidence and returning extractive text only from that evidence.
+            if label_exact_evidence and selection.lines:
+                answer = build_extractive_answer(selection)
+                answer_mode = "extractive"
+        elif selection.confident:
+            llm_answer = build_llm_answer(message, selection, results)
+            if llm_answer is not None:
+                answer = llm_answer
+                answer_mode = "llm" if llm_answer != NO_ANSWER_TEXT else "no_answer"
             else:
-                llm_answer = build_llm_answer(message, selection, results)
-                if llm_answer is not None:
-                    answer = llm_answer
-                    answer_mode = "llm" if llm_answer != NO_ANSWER_TEXT else "no_answer"
-                else:
-                    answer = build_extractive_answer(selection)
-                    answer_mode = "extractive"
+                answer = build_extractive_answer(selection)
+                answer_mode = "extractive"
 
         sources = []
         for rank, r in enumerate(results, start=1):

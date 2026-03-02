@@ -129,6 +129,50 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertIn("C3 is due by 11:59 pm PT.", second_body.get("answer", ""))
         self.assertIn("memory_applied", second_body)
 
+    def test_session_reset_requires_session_id(self):
+        status, body = self._request("POST", "/api/session/reset", payload={})
+        self.assertEqual(status, 400)
+        self.assertEqual(body.get("error"), "session_id is required")
+
+    def test_session_reset_clears_memory_context(self):
+        session_id = "memory-reset-test"
+
+        first_status, first_body = self._request(
+            "POST",
+            "/api/chat",
+            payload={"message": "When is C3 due?", "session_id": session_id},
+        )
+        self.assertEqual(first_status, 200)
+        self.assertEqual(first_body.get("answer_mode"), "deterministic")
+
+        followup_status, followup_body = self._request(
+            "POST",
+            "/api/chat",
+            payload={"message": "What about it?", "session_id": session_id},
+        )
+        self.assertEqual(followup_status, 200)
+        self.assertEqual(followup_body.get("answer_mode"), "deterministic")
+        self.assertIn("memory_applied", followup_body)
+
+        reset_status, reset_body = self._request(
+            "POST",
+            "/api/session/reset",
+            payload={"session_id": session_id},
+        )
+        self.assertEqual(reset_status, 200)
+        self.assertEqual(reset_body.get("status"), "ok")
+        self.assertEqual(reset_body.get("session_id"), session_id)
+        self.assertTrue(reset_body.get("cleared"))
+
+        after_reset_status, after_reset_body = self._request(
+            "POST",
+            "/api/chat",
+            payload={"message": "What about it?", "session_id": session_id},
+        )
+        self.assertEqual(after_reset_status, 200)
+        self.assertEqual(after_reset_body.get("answer_mode"), "no_answer")
+        self.assertNotIn("memory_applied", after_reset_body)
+
 
 if __name__ == "__main__":
     unittest.main()

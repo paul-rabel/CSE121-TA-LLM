@@ -290,6 +290,15 @@ class SessionMemoryManager:
         with self._lock:
             self._pending_clarifications.pop(session_id, None)
 
+    def reset_session(self, session_id: Optional[str]) -> bool:
+        if not session_id:
+            return False
+        with self._lock:
+            had_data = session_id in self._sessions or session_id in self._pending_clarifications
+            self._sessions.pop(session_id, None)
+            self._pending_clarifications.pop(session_id, None)
+            return had_data
+
 
 def tokenize(text: str) -> List[str]:
     raw_tokens = re.findall(r"[a-z0-9]+", text.lower())
@@ -2545,7 +2554,7 @@ class ChatHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
-        if path != "/api/chat":
+        if path not in {"/api/chat", "/api/session/reset"}:
             self._send_text("Not Found", HTTPStatus.NOT_FOUND)
             return
 
@@ -2554,6 +2563,22 @@ class ChatHandler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length) or b"{}")
         except (ValueError, json.JSONDecodeError):
             self._send_json({"error": "Invalid JSON payload"}, HTTPStatus.BAD_REQUEST)
+            return
+
+        if path == "/api/session/reset":
+            raw_session_id = str(payload.get("session_id", "")).strip()
+            session_id = raw_session_id[:80] if raw_session_id else None
+            if not session_id:
+                self._send_json({"error": "session_id is required"}, HTTPStatus.BAD_REQUEST)
+                return
+            cleared = self.memory.reset_session(session_id)
+            self._send_json(
+                {
+                    "status": "ok",
+                    "session_id": session_id,
+                    "cleared": cleared,
+                }
+            )
             return
 
         message = str(payload.get("message", "")).strip()

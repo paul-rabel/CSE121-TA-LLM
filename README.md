@@ -144,6 +144,28 @@ Optional response fields:
 - `query_used`
 - `needs_clarification` (when `answer_mode` is `clarification`)
 
+### `POST /api/session/reset`
+
+Clears server-side memory for one chat session.
+
+Request:
+
+```json
+{
+  "session_id": "browser-session-123"
+}
+```
+
+Response:
+
+```json
+{
+  "status": "ok",
+  "session_id": "browser-session-123",
+  "cleared": true
+}
+```
+
 ## Configuration
 
 Key environment variables:

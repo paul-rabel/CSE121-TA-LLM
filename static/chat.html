@@ -454,9 +454,15 @@
       form {
         display: grid;
         grid-template-columns: 1fr auto;
+        align-items: center;
         gap: 10px;
         padding: 11px;
         border-top: 1px solid var(--form-border);
+      }
+
+      .form-actions {
+        display: inline-flex;
+        gap: 8px;
       }
 
       #message-input {
@@ -474,18 +480,30 @@
         color: var(--placeholder);
       }
 
-      #send-btn {
+      #send-btn,
+      #reset-btn {
         border: 0;
         border-radius: 11px;
         padding: 0 16px;
+        height: 42px;
         color: var(--button-text);
         font-weight: 700;
         cursor: pointer;
+      }
+
+      #send-btn {
         background: linear-gradient(145deg, var(--button-a), var(--button-b));
         box-shadow: var(--button-shadow);
       }
 
-      #send-btn:disabled {
+      #reset-btn {
+        border: 1px solid var(--input-border);
+        background: var(--input-bg);
+        color: var(--text-main);
+      }
+
+      #send-btn:disabled,
+      #reset-btn:disabled {
         opacity: 0.6;
         cursor: not-allowed;
       }
@@ -860,6 +878,12 @@
           grid-template-columns: 1fr;
         }
 
+        .form-actions {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+        }
+
+        #reset-btn,
         #send-btn {
           height: 42px;
         }
@@ -906,7 +930,10 @@
         <div id="messages"></div>
         <form id="chat-form">
           <input id="message-input" placeholder="Ask schedule, assignments, policy, and section questions" autocomplete="off" />
-          <button id="send-btn" type="submit">Transmit</button>
+          <div class="form-actions">
+            <button id="reset-btn" type="button">New Session</button>
+            <button id="send-btn" type="submit">Transmit</button>
+          </div>
         </form>
       </section>
     </div>
@@ -916,6 +943,7 @@
       const formEl = document.getElementById("chat-form");
       const inputEl = document.getElementById("message-input");
       const btnEl = document.getElementById("send-btn");
+      const resetBtnEl = document.getElementById("reset-btn");
       const statusEl = document.getElementById("status-text");
       const themeToggleEl = document.getElementById("theme-toggle");
       const themeToggleLabelEl = document.getElementById("theme-toggle-label");
@@ -946,7 +974,15 @@
         }
       }
 
-      const sessionId = getOrCreateSessionId();
+      function persistSessionId(sessionId) {
+        try {
+          localStorage.setItem(SESSION_KEY, sessionId);
+        } catch (err) {
+          // Ignore storage failures (private mode or blocked storage).
+        }
+      }
+
+      let sessionId = getOrCreateSessionId();
 
       function getInitialTheme() {
         let storedTheme = null;
@@ -1084,8 +1120,18 @@
         messagesEl.scrollTop = messagesEl.scrollHeight;
       }
 
+      function addReadyMessage() {
+        addMessage(
+          "TAI Assistant online. Ask me anything about CSE 121 and I will search the indexed course sources.",
+          "assistant",
+          [],
+          "ready"
+        );
+      }
+
       async function sendMessage(message) {
         btnEl.disabled = true;
+        resetBtnEl.disabled = true;
         setThinking(true);
 
         try {
@@ -1115,9 +1161,39 @@
           statusEl.textContent = "Offline";
         } finally {
           btnEl.disabled = false;
+          resetBtnEl.disabled = false;
           setThinking(false);
         }
       }
+
+      resetBtnEl.addEventListener("click", async () => {
+        if (btnEl.disabled) {
+          return;
+        }
+
+        const previousSessionId = sessionId;
+        sessionId = createSessionId();
+        persistSessionId(sessionId);
+
+        messagesEl.textContent = "";
+        addReadyMessage();
+        statusEl.textContent = "Resetting session";
+        resetBtnEl.disabled = true;
+
+        try {
+          await fetch("/api/session/reset", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ session_id: previousSessionId })
+          });
+          statusEl.textContent = "Ready";
+        } catch (err) {
+          statusEl.textContent = "Ready";
+        } finally {
+          resetBtnEl.disabled = false;
+          inputEl.focus();
+        }
+      });
 
       formEl.addEventListener("submit", async (e) => {
         e.preventDefault();
@@ -1128,12 +1204,7 @@
         await sendMessage(message);
       });
 
-      addMessage(
-        "TAI Assistant online. Ask me anything about CSE 121 and I will search the indexed course sources.",
-        "assistant",
-        [],
-        "ready"
-      );
+      addReadyMessage();
     </script>
   </body>
 </html>

@@ -102,9 +102,16 @@ Request:
 {
   "message": "When is R4 due and what assignments are eligible?",
   "session_id": "browser-session-123",
-  "debug": false
+  "debug": false,
+  "context_mode": "retrieval",
+  "premium_mode": false
 }
 ```
+
+Optional request fields for LLM context:
+
+- `context_mode`: one of `retrieval`, `full`, `section_map`
+- `premium_mode`: boolean shortcut (`true` forces `full`, `false` forces `retrieval`)
 
 Response shape:
 
@@ -143,6 +150,7 @@ Optional response fields:
 - `memory_applied`
 - `query_used`
 - `needs_clarification` (when `answer_mode` is `clarification`)
+- `llm_context_mode` (included when non-default mode is used)
 
 ### `POST /api/session/reset`
 
@@ -176,6 +184,9 @@ Key environment variables:
 | `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Ollama endpoint |
 | `OLLAMA_MODEL` | empty | Optional Ollama model name. If empty, auto-select first installed model |
 | `OLLAMA_TAGS_TIMEOUT_SECS` | `3` | Timeout for Ollama model auto-discovery (`/api/tags`) |
+| `LLM_CONTEXT_MODE` | `retrieval` | LLM context strategy: `retrieval`, `full`, or `section_map` |
+| `LLM_FULL_CONTEXT_MAX_CHARS` | `160000` | Character budget when using `full` or `section_map` context |
+| `LLM_SECTION_MAP_EXPANDED_SECTIONS` | `8` | Number of expanded sections in `section_map` mode |
 | `ENABLE_DENSE_RETRIEVAL` | `0` | Enable dense retrieval in hybrid ranking |
 | `LLM_REQUIRE_VALID_CITATIONS` | `1` | Reject LLM answers with invalid/missing `[source N]` citations |
 | `ENABLE_SESSION_MEMORY` | `1` | Enable multi-turn context memory |

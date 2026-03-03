@@ -465,6 +465,17 @@
         gap: 8px;
       }
 
+      #context-mode-select {
+        border: 1px solid var(--input-border);
+        border-radius: 11px;
+        background: var(--input-bg);
+        color: var(--text-main);
+        padding: 0 10px;
+        height: 42px;
+        min-width: 132px;
+        font-weight: 600;
+      }
+
       #message-input {
         width: 100%;
         border: 1px solid var(--input-border);
@@ -503,6 +514,7 @@
       }
 
       #send-btn:disabled,
+      #context-mode-select:disabled,
       #reset-btn:disabled {
         opacity: 0.6;
         cursor: not-allowed;
@@ -880,9 +892,10 @@
 
         .form-actions {
           display: grid;
-          grid-template-columns: 1fr 1fr;
+          grid-template-columns: 1fr 1fr 1fr;
         }
 
+        #context-mode-select,
         #reset-btn,
         #send-btn {
           height: 42px;
@@ -931,6 +944,11 @@
         <form id="chat-form">
           <input id="message-input" placeholder="Ask schedule, assignments, policy, and section questions" autocomplete="off" />
           <div class="form-actions">
+            <select id="context-mode-select" aria-label="LLM context mode">
+              <option value="retrieval">Focused</option>
+              <option value="section_map">Section Map</option>
+              <option value="full">Premium Full</option>
+            </select>
             <button id="reset-btn" type="button">New Session</button>
             <button id="send-btn" type="submit">Transmit</button>
           </div>
@@ -944,11 +962,14 @@
       const inputEl = document.getElementById("message-input");
       const btnEl = document.getElementById("send-btn");
       const resetBtnEl = document.getElementById("reset-btn");
+      const contextModeEl = document.getElementById("context-mode-select");
       const statusEl = document.getElementById("status-text");
       const themeToggleEl = document.getElementById("theme-toggle");
       const themeToggleLabelEl = document.getElementById("theme-toggle-label");
       const THEME_KEY = "tai-theme";
       const SESSION_KEY = "tai-session-id";
+      const CONTEXT_MODE_KEY = "tai-context-mode";
+      const VALID_CONTEXT_MODES = new Set(["retrieval", "section_map", "full"]);
       const prefersReducedMotion =
         typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       let themeFadeTimeout = null;
@@ -983,6 +1004,18 @@
       }
 
       let sessionId = getOrCreateSessionId();
+
+      function getInitialContextMode() {
+        try {
+          const stored = localStorage.getItem(CONTEXT_MODE_KEY);
+          if (stored && VALID_CONTEXT_MODES.has(stored)) {
+            return stored;
+          }
+        } catch (err) {
+          // Ignore storage failures (private mode or blocked storage).
+        }
+        return "retrieval";
+      }
 
       function getInitialTheme() {
         let storedTheme = null;
@@ -1040,6 +1073,17 @@
         transitionTheme(currentTheme);
         try {
           localStorage.setItem(THEME_KEY, currentTheme);
+        } catch (err) {
+          // Ignore storage failures (private mode or blocked storage).
+        }
+      });
+
+      contextModeEl.value = getInitialContextMode();
+      contextModeEl.addEventListener("change", () => {
+        const mode = VALID_CONTEXT_MODES.has(contextModeEl.value) ? contextModeEl.value : "retrieval";
+        contextModeEl.value = mode;
+        try {
+          localStorage.setItem(CONTEXT_MODE_KEY, mode);
         } catch (err) {
           // Ignore storage failures (private mode or blocked storage).
         }
@@ -1132,13 +1176,15 @@
       async function sendMessage(message) {
         btnEl.disabled = true;
         resetBtnEl.disabled = true;
+        contextModeEl.disabled = true;
         setThinking(true);
+        const contextMode = VALID_CONTEXT_MODES.has(contextModeEl.value) ? contextModeEl.value : "retrieval";
 
         try {
           const res = await fetch("/api/chat", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ message, session_id: sessionId })
+            body: JSON.stringify({ message, session_id: sessionId, context_mode: contextMode })
           });
 
           const data = await res.json();
@@ -1162,6 +1208,7 @@
         } finally {
           btnEl.disabled = false;
           resetBtnEl.disabled = false;
+          contextModeEl.disabled = false;
           setThinking(false);
         }
       }

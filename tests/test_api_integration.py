@@ -84,6 +84,24 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertEqual(body.get("error"), "message is required")
 
+    def test_chat_rejects_invalid_context_mode(self):
+        status, body = self._request(
+            "POST",
+            "/api/chat",
+            payload={"message": "When is C3 due?", "context_mode": "all_the_things"},
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("context_mode must be one of", body.get("error", ""))
+
+    def test_chat_rejects_non_boolean_premium_mode(self):
+        status, body = self._request(
+            "POST",
+            "/api/chat",
+            payload={"message": "When is C3 due?", "premium_mode": "yes"},
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(body.get("error"), "premium_mode must be a boolean")
+
     def test_chat_returns_deterministic_answer_with_sources(self):
         status, body = self._request(
             "POST",

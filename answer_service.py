@@ -61,6 +61,14 @@ SECTION_WINDOW_CHUNKS = max(0, int(os.getenv("SECTION_WINDOW_CHUNKS", "1")))
 SECTION_CONTEXT_MAX_CHUNKS = max(1, int(os.getenv("SECTION_CONTEXT_MAX_CHUNKS", "4")))
 ENABLE_CLARIFICATION_STITCH = os.getenv("ENABLE_CLARIFICATION_STITCH", "1") == "1"
 ALWAYS_ATTEMPT_LLM = os.getenv("ALWAYS_ATTEMPT_LLM", "1") == "1"
+LLM_CONTEXT_MODE_CHOICES = {"retrieval", "full", "section_map"}
+DEFAULT_LLM_CONTEXT_MODE = os.getenv("LLM_CONTEXT_MODE", "retrieval").strip().lower().replace("-", "_")
+if DEFAULT_LLM_CONTEXT_MODE == "premium":
+    DEFAULT_LLM_CONTEXT_MODE = "full"
+if DEFAULT_LLM_CONTEXT_MODE not in LLM_CONTEXT_MODE_CHOICES:
+    DEFAULT_LLM_CONTEXT_MODE = "retrieval"
+LLM_FULL_CONTEXT_MAX_CHARS = max(20000, int(os.getenv("LLM_FULL_CONTEXT_MAX_CHARS", "160000")))
+LLM_SECTION_MAP_EXPANDED_SECTIONS = max(1, int(os.getenv("LLM_SECTION_MAP_EXPANDED_SECTIONS", "8")))
 
 _OLLAMA_MODEL_CACHE = ""
 _OLLAMA_MODEL_LOOKUP_ATTEMPTED = False
@@ -679,6 +687,30 @@ def should_stitch_pending_query(message: str) -> bool:
         return True
     # Long, clearly standalone prompts should start a fresh query.
     return not any(word in lower for word in (" when ", " where ", " who ", " what ", " how ", "?"))
+
+
+def normalize_llm_context_mode(value: str) -> str:
+    mode = str(value).strip().lower().replace("-", "_")
+    if mode == "premium":
+        mode = "full"
+    if mode not in LLM_CONTEXT_MODE_CHOICES:
+        raise ValueError(
+            "context_mode must be one of: retrieval, full, section_map"
+        )
+    return mode
+
+
+def resolve_llm_context_mode(
+    llm_context_mode: Optional[str] = None,
+    premium_mode: Optional[bool] = None,
+) -> str:
+    if llm_context_mode is not None and str(llm_context_mode).strip():
+        return normalize_llm_context_mode(str(llm_context_mode))
+    if premium_mode is True:
+        return "full"
+    if premium_mode is False:
+        return "retrieval"
+    return DEFAULT_LLM_CONTEXT_MODE
 
 
 def score_line(
@@ -2155,24 +2187,217 @@ def _context_results_for_llm(
     return expanded
 
 
-def build_llm_context(
+def _context_sections_from_retriever(
+    retriever: Optional[Retriever],
+    fallback_results: List[SearchResult],
+) -> List[SearchResult]:
+    grouped: Dict[Tuple[str, str, str], List[str]] = {}
+
+    if retriever and hasattr(retriever, "metadata"):
+        for row in getattr(retriever, "metadata", []):
+            if not isinstance(row, dict):
+                continue
+            meta = row.get("metadata", {})
+            if not isinstance(meta, dict):
+                continue
+            url = str(meta.get("url", ""))
+            title = str(meta.get("title", "Untitled"))
+            section = str(meta.get("section", "")).strip() or title
+            text = str(row.get("text", "")).strip()
+            if not text:
+                continue
+            key = (url, title, section)
+            grouped.setdefault(key, [])
+            if not grouped[key] or grouped[key][-1] != text:
+                grouped[key].append(text)
+
+    if not grouped:
+        for result in fallback_results:
+            text = str(result.text).strip()
+            if not text:
+                continue
+            section = str(result.section).strip() or result.title
+            key = (result.url, result.title, section)
+            grouped.setdefault(key, [])
+            if not grouped[key] or grouped[key][-1] != text:
+                grouped[key].append(text)
+
+    sections: List[SearchResult] = []
+    for (url, title, section), chunks in grouped.items():
+        combined = "\n".join(chunk for chunk in chunks if chunk).strip()
+        if not combined:
+            continue
+        sections.append(
+            SearchResult(
+                doc_id=len(sections),
+                text=combined,
+                url=url,
+                title=title,
+                chunk_index=-1,
+                distance=0.0,
+                score=0.0,
+                section=section,
+            )
+        )
+    return sections
+
+
+def _truncate_context_text(text: str, max_chars: int) -> str:
+    if max_chars <= 0:
+        return ""
+    if len(text) <= max_chars:
+        return text
+    if max_chars <= 3:
+        return text[:max_chars]
+    return text[: max_chars - 3].rstrip() + "..."
+
+
+def _format_context_title(result: SearchResult) -> str:
+    title = result.title
+    if result.section and result.section != result.title:
+        return f"{title} / {result.section}"
+    return title
+
+
+def _build_retrieval_llm_context(
     query: str,
     results: List[SearchResult],
     retriever: Optional[Retriever] = None,
-) -> str:
+) -> Tuple[str, int]:
     sections: List[str] = []
-    for source_num, result in enumerate(_context_results_for_llm(query, results, retriever), start=1):
+    for result in _context_results_for_llm(query, results, retriever):
         selected_lines = _select_llm_context_lines(query, result, LLM_CONTEXT_LINES_PER_SOURCE)
         if not selected_lines:
             continue
         bullet_lines = "\n".join(f"- {line}" for line in selected_lines)
-        source_title = result.title
-        if result.section and result.section != result.title:
-            source_title = f"{source_title} / {result.section}"
+        source_num = len(sections) + 1
+        source_title = _format_context_title(result)
         sections.append(
             f"[source {source_num}] {source_title} - {result.url}\n{bullet_lines}"
         )
-    return "\n\n".join(sections)
+    return "\n\n".join(sections), len(sections)
+
+
+def _build_full_corpus_llm_context(
+    query: str,
+    results: List[SearchResult],
+    retriever: Optional[Retriever] = None,
+) -> Tuple[str, int]:
+    _ = query
+    all_sections = _context_sections_from_retriever(retriever, results)
+    blocks: List[str] = []
+    used_chars = 0
+
+    for result in all_sections:
+        source_num = len(blocks) + 1
+        source_title = _format_context_title(result)
+        header = f"[source {source_num}] {source_title} - {result.url}\n"
+        remaining_chars = LLM_FULL_CONTEXT_MAX_CHARS - used_chars
+        if remaining_chars <= len(header) + 32:
+            break
+        body = _truncate_context_text(result.text.strip(), remaining_chars - len(header))
+        if not body:
+            continue
+        entry = f"{header}{body}"
+        blocks.append(entry)
+        used_chars += len(entry) + 2
+        if used_chars >= LLM_FULL_CONTEXT_MAX_CHARS:
+            break
+
+    return "\n\n".join(blocks), len(blocks)
+
+
+def _section_map_score(query: str, result: SearchResult) -> float:
+    query_token_set = set(query_terms(query, for_query=True))
+    if not query_token_set:
+        return 0.0
+
+    score = 0.0
+    header_tokens = set(query_terms(f"{result.title} {result.section}"))
+    preview_tokens = set(query_terms(result.text[:1800]))
+    score += len(query_token_set & header_tokens) * 2.6
+    score += len(query_token_set & preview_tokens) * 1.4
+
+    line_lower = result.text.lower()
+    intents = infer_query_intents(query)
+    if intents["wants_time"] and (DATE_PATTERN.search(line_lower) or TIME_PATTERN.search(line_lower)):
+        score += 1.1
+    if intents["wants_location"] and any(word in line_lower for word in LOCATION_HINTS):
+        score += 0.9
+    if intents["wants_staff"] and any(word in line_lower for word in STAFF_HINTS):
+        score += 0.9
+    if intents["wants_assignments"] and any(word in line_lower for word in ASSIGNMENT_HINTS):
+        score += 0.9
+    return score
+
+
+def _build_section_map_llm_context(
+    query: str,
+    results: List[SearchResult],
+    retriever: Optional[Retriever] = None,
+) -> Tuple[str, int]:
+    all_sections = _context_sections_from_retriever(retriever, results)
+    if not all_sections:
+        return "", 0
+
+    index_lines: List[str] = []
+    section_scores: List[Tuple[float, int]] = []
+    for idx, result in enumerate(all_sections, start=1):
+        source_title = _format_context_title(result)
+        index_lines.append(f"[source {idx}] {source_title} - {result.url}")
+        section_scores.append((_section_map_score(query, result), idx - 1))
+
+    parts: List[str] = [
+        "Section index for the full course content:\n" + "\n".join(index_lines)
+    ]
+    used_chars = len(parts[0]) + 2
+
+    expanded_ids = [
+        section_idx
+        for score, section_idx in sorted(section_scores, key=lambda item: item[0], reverse=True)
+        if score > 0
+    ][:LLM_SECTION_MAP_EXPANDED_SECTIONS]
+    if not expanded_ids:
+        expanded_ids = list(range(min(LLM_SECTION_MAP_EXPANDED_SECTIONS, len(all_sections))))
+
+    expanded_blocks: List[str] = []
+    for section_idx in expanded_ids:
+        source_num = section_idx + 1
+        result = all_sections[section_idx]
+        source_title = _format_context_title(result)
+        header = f"[source {source_num}] {source_title} - {result.url}\n"
+        remaining_chars = LLM_FULL_CONTEXT_MAX_CHARS - used_chars
+        if remaining_chars <= len(header) + 32:
+            break
+        body = _truncate_context_text(result.text.strip(), remaining_chars - len(header))
+        if not body:
+            continue
+        entry = f"{header}{body}"
+        expanded_blocks.append(entry)
+        used_chars += len(entry) + 2
+        if used_chars >= LLM_FULL_CONTEXT_MAX_CHARS:
+            break
+
+    if expanded_blocks:
+        parts.append(
+            "Expanded section content for likely relevant paths:\n" + "\n\n".join(expanded_blocks)
+        )
+
+    return "\n\n".join(parts), len(all_sections)
+
+
+def build_llm_context(
+    query: str,
+    results: List[SearchResult],
+    retriever: Optional[Retriever] = None,
+    context_mode: str = DEFAULT_LLM_CONTEXT_MODE,
+) -> Tuple[str, int]:
+    mode = normalize_llm_context_mode(context_mode)
+    if mode == "full":
+        return _build_full_corpus_llm_context(query, results, retriever)
+    if mode == "section_map":
+        return _build_section_map_llm_context(query, results, retriever)
+    return _build_retrieval_llm_context(query, results, retriever)
 
 
 def build_llm_answer(
@@ -2181,13 +2406,20 @@ def build_llm_answer(
     results: List[SearchResult],
     retriever: Optional[Retriever] = None,
     preferred_answer: Optional[str] = None,
+    context_mode: str = DEFAULT_LLM_CONTEXT_MODE,
 ) -> Optional[str]:
+    _ = selection
     if not ENABLE_LLM_RESPONSE:
         return None
     if not results:
         return NO_ANSWER_TEXT
 
-    context_block = build_llm_context(query, results, retriever)
+    context_block, max_source_num = build_llm_context(
+        query,
+        results,
+        retriever,
+        context_mode=context_mode,
+    )
     if not context_block.strip():
         return NO_ANSWER_TEXT
 
@@ -2245,8 +2477,7 @@ def build_llm_answer(
         if is_clarification_request(text):
             return text
         if LLM_REQUIRE_VALID_CITATIONS:
-            max_source_num = llm_source_limit(results)
-            if not llm_citations_are_valid(text, max_source_num):
+            if not llm_citations_are_valid(text, max(1, max_source_num)):
                 return None
         if not llm_answer_is_grounded(text, context_block):
             return None
@@ -2346,10 +2577,13 @@ def build_chat_payload(
     memory_manager: Optional[SessionMemoryManager] = None,
     session_id: Optional[str] = None,
     include_source_details: bool = DEBUG_SOURCE_DETAILS_DEFAULT,
+    llm_context_mode: Optional[str] = None,
+    premium_mode: Optional[bool] = None,
 ) -> Dict[str, Any]:
     original_message = message.strip()
     if not original_message:
         raise ValueError("message is required")
+    resolved_context_mode = resolve_llm_context_mode(llm_context_mode, premium_mode)
 
     history = memory_manager.get_turns(session_id) if (memory_manager and ENABLE_SESSION_MEMORY) else []
     memory_notes: List[str] = []
@@ -2414,12 +2648,15 @@ def build_chat_payload(
 
     should_attempt_llm = ALWAYS_ATTEMPT_LLM or fallback_mode == "no_answer"
     if should_attempt_llm:
+        if resolved_context_mode != "retrieval":
+            memory_notes.append(f"LLM context mode: {resolved_context_mode}.")
         llm_answer = build_llm_answer(
             query_for_search,
             selection,
             results,
             retriever=retriever,
             preferred_answer=fallback_answer if fallback_mode != "no_answer" else None,
+            context_mode=resolved_context_mode,
         )
         if llm_answer is not None:
             if llm_answer == NO_ANSWER_TEXT and fallback_mode != "no_answer":
@@ -2508,6 +2745,8 @@ def build_chat_payload(
         payload["query_used"] = query_for_search
     if answer_mode == "clarification":
         payload["needs_clarification"] = True
+    if resolved_context_mode != "retrieval":
+        payload["llm_context_mode"] = resolved_context_mode
     return payload
 
 
@@ -2588,6 +2827,11 @@ class ChatHandler(BaseHTTPRequestHandler):
         raw_session_id = str(payload.get("session_id", "")).strip()
         session_id = raw_session_id[:80] if raw_session_id else None
         include_source_details = DEBUG_SOURCE_DETAILS_DEFAULT or bool(payload.get("debug", False))
+        llm_context_mode = payload.get("context_mode")
+        premium_mode = payload.get("premium_mode")
+        if premium_mode is not None and not isinstance(premium_mode, bool):
+            self._send_json({"error": "premium_mode must be a boolean"}, HTTPStatus.BAD_REQUEST)
+            return
 
         try:
             response = build_chat_payload(
@@ -2596,6 +2840,8 @@ class ChatHandler(BaseHTTPRequestHandler):
                 memory_manager=self.memory,
                 session_id=session_id,
                 include_source_details=include_source_details,
+                llm_context_mode=str(llm_context_mode) if llm_context_mode is not None else None,
+                premium_mode=premium_mode,
             )
         except ValueError as exc:
             self._send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)

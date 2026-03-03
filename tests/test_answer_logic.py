@@ -184,6 +184,58 @@ class AnswerLogicTests(unittest.TestCase):
         self.assertIsNone(answer_service.ollama_model_from_tags_payload({"models": []}))
         self.assertIsNone(answer_service.ollama_model_from_tags_payload({}))
 
+    def test_resolve_llm_context_mode(self):
+        self.assertEqual(answer_service.resolve_llm_context_mode("retrieval"), "retrieval")
+        self.assertEqual(answer_service.resolve_llm_context_mode("section-map"), "section_map")
+        self.assertEqual(answer_service.resolve_llm_context_mode("premium"), "full")
+        self.assertEqual(answer_service.resolve_llm_context_mode(premium_mode=True), "full")
+        self.assertEqual(answer_service.resolve_llm_context_mode(premium_mode=False), "retrieval")
+        with self.assertRaises(ValueError):
+            answer_service.resolve_llm_context_mode("unknown")
+
+    def test_build_llm_context_supports_full_and_section_map(self):
+        class FakeRetriever:
+            metadata = [
+                {
+                    "text": "## Quiz Schedule\nQuiz 2 is on Thu 03/05.",
+                    "metadata": {
+                        "url": "https://courses.cs.washington.edu/courses/cse121/26wi/syllabus/",
+                        "title": "Syllabus",
+                        "section": "Quiz Schedule",
+                        "chunk_index": 0,
+                    },
+                },
+                {
+                    "text": "## Course Staff\nInstructor: Miya Natsuhara",
+                    "metadata": {
+                        "url": "https://courses.cs.washington.edu/courses/cse121/26wi/staff/",
+                        "title": "Staff",
+                        "section": "Course Staff",
+                        "chunk_index": 0,
+                    },
+                },
+            ]
+
+        context_full, source_count_full = answer_service.build_llm_context(
+            "When is Quiz 2?",
+            results=[],
+            retriever=FakeRetriever(),
+            context_mode="full",
+        )
+        self.assertIn("Quiz 2 is on Thu 03/05", context_full)
+        self.assertIn("[source 1]", context_full)
+        self.assertGreaterEqual(source_count_full, 2)
+
+        context_map, source_count_map = answer_service.build_llm_context(
+            "Who is the instructor?",
+            results=[],
+            retriever=FakeRetriever(),
+            context_mode="section_map",
+        )
+        self.assertIn("Section index for the full course content", context_map)
+        self.assertIn("Expanded section content for likely relevant paths", context_map)
+        self.assertGreaterEqual(source_count_map, 2)
+
     def test_llm_grounding_and_preferred_conflict_guards(self):
         context = (
             "[source 1] CSE 121 - https://courses.cs.washington.edu/courses/cse121/26wi/\n"
@@ -300,8 +352,9 @@ class AnswerLogicTests(unittest.TestCase):
         original_llm = answer_service.build_llm_answer
         calls = SimpleNamespace(count=0)
 
-        def fake_llm(query, _selection, _results, retriever=None, preferred_answer=None):
+        def fake_llm(query, _selection, _results, retriever=None, preferred_answer=None, **kwargs):
             _ = (retriever, preferred_answer)
+            self.assertIn("context_mode", kwargs)
             calls.count += 1
             if calls.count == 1:
                 return "Could you clarify whether you mean Quiz 1 or Quiz 2?"

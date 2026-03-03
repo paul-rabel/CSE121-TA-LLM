@@ -126,7 +126,8 @@ Optional request fields for LLM context:
 
 - `context_mode`: one of `retrieval`, `full`, `section_map`
 - `premium_mode`: boolean shortcut (`true` forces `full`, `false` forces `retrieval`)
-- Premium behavior (`context_mode=full` or `section_map`): two-stage LLM flow (router -> reader), polished prose output, and no deterministic candidate-answer injection.
+- Premium behavior (`context_mode=full` or `section_map`): two-stage LLM flow (router -> reader), polished prose output, and no deterministic candidate-answer injection. The router receives link-only candidates (no source text) and selects links for the reader.
+- Optional checker behavior: a third LLM classifier can block code-feedback/debugging requests and return a policy response.
 - `thinking_mode`: include `llm_trace` in response (prompt + model thinking, when available)
 
 Response shape:
@@ -160,6 +161,7 @@ Response shape:
 - `extractive`
 - `no_answer`
 - `clarification`
+- `policy` (code-feedback request blocked by checker)
 
 Optional response fields:
 
@@ -168,6 +170,9 @@ Optional response fields:
 - `needs_clarification` (when `answer_mode` is `clarification`)
 - `llm_context_mode` (included when non-default mode is used)
 - `llm_trace` (included when `thinking_mode=true`)
+  - Includes compact router/reader/checker prompt previews and trace link groups (`router_candidate_links`, `router_to_reader_links`, `reader_links`) without dumping full source text.
+  - Includes router rationale (`router_rationale`) and checker decision details (`checker_decision`, `checker_reason`) when applicable.
+  - Includes final answer trace (`final_answer`, `final_answer_mode`) and response scan fields (`checker_response_contains_code`, `checker_response_reason`, optional `checker_response_markers`).
 
 ### `POST /api/session/reset`
 
@@ -202,6 +207,7 @@ Key environment variables:
 | `OLLAMA_MODEL` | empty | Optional Ollama model name. If empty, auto-select first installed model |
 | `OLLAMA_ROUTER_MODEL` | empty | Optional premium router model override (section selection) |
 | `OLLAMA_READER_MODEL` | empty | Optional premium reader model override (final answer generation) |
+| `OLLAMA_CHECKER_MODEL` | empty | Optional code-feedback checker model override (classification only) |
 | `OLLAMA_TAGS_TIMEOUT_SECS` | `3` | Timeout for Ollama model auto-discovery (`/api/tags`) |
 | `LLM_CONTEXT_MODE` | `retrieval` | LLM context strategy: `retrieval`, `full`, or `section_map` |
 | `LLM_FULL_CONTEXT_MAX_CHARS` | `160000` | Character budget when using `full` or `section_map` context |
@@ -209,7 +215,8 @@ Key environment variables:
 | `PREMIUM_ROUTER_MAX_CANDIDATES` | `24` | Max candidate sections shown to the premium router model |
 | `PREMIUM_ROUTER_TOP_SOURCES` | `2` | Max section picks requested from the premium router model |
 | `PREMIUM_READER_MAX_CONTEXT_CHARS` | `90000` | Character budget for premium reader context after router selection |
-| `LLM_TRACE_MAX_CHARS` | `120000` | Maximum prompt/thinking text size returned in `llm_trace` |
+| `LLM_TRACE_MAX_CHARS` | `24000` | Maximum prompt/thinking text size returned in `llm_trace` |
+| `ENABLE_CODE_GUARD_CHECKER` | `1` | Enable checker model that blocks code-feedback/debugging requests |
 | `ENABLE_DENSE_RETRIEVAL` | `0` | Enable dense retrieval in hybrid ranking |
 | `LLM_REQUIRE_VALID_CITATIONS` | `1` | Reject LLM answers with invalid/missing `[source N]` citations |
 | `ENABLE_SESSION_MEMORY` | `1` | Enable multi-turn context memory |

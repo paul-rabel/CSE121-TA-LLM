@@ -53,6 +53,7 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "").strip()
 OLLAMA_ROUTER_MODEL = os.getenv("OLLAMA_ROUTER_MODEL", "").strip()
 OLLAMA_READER_MODEL = os.getenv("OLLAMA_READER_MODEL", "").strip()
+OLLAMA_CHECKER_MODEL = os.getenv("OLLAMA_CHECKER_MODEL", "").strip()
 OLLAMA_TIMEOUT_SECS = int(os.getenv("OLLAMA_TIMEOUT_SECS", "45"))
 OLLAMA_TAGS_TIMEOUT_SECS = int(os.getenv("OLLAMA_TAGS_TIMEOUT_SECS", "3"))
 LLM_CONTEXT_SOURCE_LIMIT = max(1, int(os.getenv("LLM_CONTEXT_SOURCE_LIMIT", "6")))
@@ -71,10 +72,11 @@ if DEFAULT_LLM_CONTEXT_MODE not in LLM_CONTEXT_MODE_CHOICES:
     DEFAULT_LLM_CONTEXT_MODE = "retrieval"
 LLM_FULL_CONTEXT_MAX_CHARS = max(20000, int(os.getenv("LLM_FULL_CONTEXT_MAX_CHARS", "160000")))
 LLM_SECTION_MAP_EXPANDED_SECTIONS = max(1, int(os.getenv("LLM_SECTION_MAP_EXPANDED_SECTIONS", "8")))
-LLM_TRACE_MAX_CHARS = max(2000, int(os.getenv("LLM_TRACE_MAX_CHARS", "120000")))
+LLM_TRACE_MAX_CHARS = max(2000, int(os.getenv("LLM_TRACE_MAX_CHARS", "24000")))
 PREMIUM_ROUTER_MAX_CANDIDATES = max(4, int(os.getenv("PREMIUM_ROUTER_MAX_CANDIDATES", "24")))
 PREMIUM_ROUTER_TOP_SOURCES = max(1, int(os.getenv("PREMIUM_ROUTER_TOP_SOURCES", "2")))
 PREMIUM_READER_MAX_CONTEXT_CHARS = max(4000, int(os.getenv("PREMIUM_READER_MAX_CONTEXT_CHARS", "90000")))
+ENABLE_CODE_GUARD_CHECKER = os.getenv("ENABLE_CODE_GUARD_CHECKER", "1") == "1"
 
 _OLLAMA_MODEL_CACHE = ""
 _OLLAMA_MODEL_LOOKUP_ATTEMPTED = False
@@ -84,6 +86,9 @@ NO_ANSWER_TEXT = (
     "I couldn't find a reliable answer in the indexed course content for that question."
 )
 NO_ANSWER_SENTINEL = "NO_ANSWER_FOUND"
+CODE_GUARD_BLOCK_TEXT = (
+    "I can't help with that"
+)
 
 DATE_PATTERN = re.compile(
     r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s*\d{1,2}\b|\b\d{1,2}/\d{1,2}\b",
@@ -115,6 +120,12 @@ WEEKDAY_PATTERN = re.compile(
     re.IGNORECASE,
 )
 ROOM_PATTERN = re.compile(r"\b(?:cse2|gug)\s*[a-z]?\d+\b", re.IGNORECASE)
+INLINE_CODE_PATTERN = re.compile(r"`[^`]{2,}`")
+TRIPLE_CODE_PATTERN = re.compile(r"```|'''")
+CODE_LINE_PATTERN = re.compile(
+    r"^\s*(?:def|class|public|private|protected|static|function|const|let|var|if|for|while|return)\b",
+    re.IGNORECASE,
+)
 
 ORDINAL_WORD_TO_INT = {
     "first": 1,
@@ -181,6 +192,22 @@ SCHEDULE_HINTS = (
     "in gug",
 )
 ASSIGNMENT_HINTS = ("assignment", "project", "resub", "eligible", "released", "submission")
+CODE_REQUEST_HINTS = (
+    "debug",
+    "fix this code",
+    "fix my code",
+    "review my code",
+    "code review",
+    "help with code",
+    "why does this code",
+    "compile error",
+    "runtime error",
+    "stack trace",
+    "nullpointer",
+    "segmentation fault",
+    "syntax error",
+    "implementation",
+)
 LABEL_IN_LINE_PATTERN = re.compile(r"\b(?:quiz|[cpr])\s*0?\d+\b", re.IGNORECASE)
 LINE_LABEL_PATTERN = re.compile(
     r"\b(?:quiz\s*0?(\d+)|([cpr])\s*0?(\d+)|resub(?:mission)?\s*0?(\d+))\b",
@@ -2071,6 +2098,8 @@ def preferred_ollama_model_for_role(role: str) -> Optional[str]:
         return OLLAMA_ROUTER_MODEL
     if role_key == "reader" and OLLAMA_READER_MODEL:
         return OLLAMA_READER_MODEL
+    if role_key == "checker" and OLLAMA_CHECKER_MODEL:
+        return OLLAMA_CHECKER_MODEL
     return preferred_ollama_model()
 
 
@@ -2103,6 +2132,8 @@ def _configured_model_for_role(role: str) -> str:
         return OLLAMA_ROUTER_MODEL or OLLAMA_MODEL
     if role_key == "reader":
         return OLLAMA_READER_MODEL or OLLAMA_MODEL
+    if role_key == "checker":
+        return OLLAMA_CHECKER_MODEL or OLLAMA_MODEL
     return OLLAMA_MODEL
 
 
@@ -2134,7 +2165,7 @@ def _strip_code_fences(text: str) -> str:
     return value
 
 
-def _parse_router_source_ids(text: str, max_source_num: int) -> List[int]:
+def _parse_router_selection(text: str, max_source_num: int) -> Tuple[List[int], str]:
     cleaned = _strip_code_fences(text)
     payload = None
     try:
@@ -2155,17 +2186,23 @@ def _parse_router_source_ids(text: str, max_source_num: int) -> List[int]:
                     payload = None
 
     raw_ids = None
+    rationale = ""
     if isinstance(payload, dict):
         for key in ("sources", "source_ids", "selected_sources", "top_sources"):
             value = payload.get(key)
             if isinstance(value, list):
                 raw_ids = value
                 break
+        for key in ("rationale", "reasoning", "why", "explanation"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                rationale = value.strip()
+                break
     elif isinstance(payload, list):
         raw_ids = payload
 
     if not isinstance(raw_ids, list):
-        return []
+        return [], rationale
 
     selected_ids: List[int] = []
     seen = set()
@@ -2178,7 +2215,179 @@ def _parse_router_source_ids(text: str, max_source_num: int) -> List[int]:
             continue
         selected_ids.append(source_num)
         seen.add(source_num)
+    return selected_ids, rationale
+
+
+def _parse_router_source_ids(text: str, max_source_num: int) -> List[int]:
+    selected_ids, _ = _parse_router_selection(text, max_source_num)
     return selected_ids
+
+
+def _coerce_json_bool(value: Any) -> Optional[bool]:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "yes", "1", "block", "blocked"}:
+            return True
+        if lowered in {"false", "no", "0", "allow", "allowed"}:
+            return False
+    return None
+
+
+def _code_request_signal_score(message: str) -> Tuple[int, bool]:
+    text = message or ""
+    lower = text.lower()
+    score = 0
+    strong = False
+
+    if TRIPLE_CODE_PATTERN.search(text):
+        score += 4
+        strong = True
+    if INLINE_CODE_PATTERN.search(text):
+        score += 2
+    if any(hint in lower for hint in CODE_REQUEST_HINTS):
+        score += 3
+    if re.search(r"\b(java|python|c\+\+|c#|javascript|typescript|bash|sql)\b", lower):
+        score += 1
+    if re.search(r"[{}();=]{3,}", text):
+        score += 1
+    if any(CODE_LINE_PATTERN.search(line) and re.search(r"[(){};=]", line) for line in text.splitlines()):
+        score += 2
+        strong = True
+
+    return score, strong
+
+
+def _build_code_guard_checker_prompt(message: str) -> str:
+    return (
+        "You are a classifier for a CSE 121 course logistics assistant.\n"
+        "Decide whether the user is asking for code feedback/coding help.\n"
+        "Block when the user asks to write, fix, debug, review, or explain code, or when the message includes code snippets.\n"
+        "Allow when the user asks course logistics questions (schedule, staff, policies, deadlines, grading, resources).\n"
+        "Return strict JSON only with this shape: "
+        "{\"block\": true|false, \"reason\": \"short explanation\"}.\n\n"
+        f"User message:\n{message}"
+    )
+
+
+def _parse_checker_decision(text: str) -> Tuple[Optional[bool], str]:
+    cleaned = _strip_code_fences(text)
+    payload = None
+    try:
+        payload = json.loads(cleaned)
+    except ValueError:
+        object_match = JSON_OBJECT_PATTERN.search(cleaned)
+        if object_match:
+            try:
+                payload = json.loads(object_match.group(0))
+            except ValueError:
+                payload = None
+
+    if not isinstance(payload, dict):
+        return None, ""
+
+    block_value = None
+    for key in ("block", "should_block", "is_code_feedback", "code_feedback"):
+        if key in payload:
+            block_value = _coerce_json_bool(payload.get(key))
+            if block_value is not None:
+                break
+
+    reason = ""
+    for key in ("reason", "rationale", "why", "explanation"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            reason = value.strip()
+            break
+    return block_value, reason
+
+
+def run_code_guard_checker(message: str, llm_trace: Optional[Dict[str, Any]] = None) -> Tuple[bool, str]:
+    if not ENABLE_LLM_RESPONSE or not ENABLE_CODE_GUARD_CHECKER:
+        return False, ""
+
+    score, strong = _code_request_signal_score(message)
+    if score < 2 and not strong:
+        if llm_trace is not None:
+            llm_trace["checker_skipped"] = True
+            llm_trace["checker_decision"] = "skipped"
+        return False, ""
+
+    prompt = _build_code_guard_checker_prompt(message)
+    if llm_trace is not None:
+        llm_trace["checker_prompt_preview"] = _clip_trace_text(prompt)
+
+    try:
+        payload = request_ollama_generate_for_role("checker", prompt)
+        text = _extract_ollama_output_text(payload)
+        payload_thinking = _extract_ollama_thinking_text(payload)
+        cleaned_text, inline_thinking = _split_think_tags(text)
+        thinking_text = payload_thinking or inline_thinking
+        if llm_trace is not None:
+            llm_trace["checker_raw_response"] = _clip_trace_text(text)
+            if thinking_text:
+                llm_trace["checker_thinking"] = _clip_trace_text(thinking_text)
+
+        block, reason = _parse_checker_decision(cleaned_text)
+        if block is None:
+            block = bool(strong or score >= 4)
+            if not reason:
+                reason = "Checker output was not valid JSON; heuristic fallback used."
+        if llm_trace is not None:
+            llm_trace["checker_decision"] = "block" if block else "allow"
+            if reason:
+                llm_trace["checker_reason"] = reason
+        return bool(block), reason
+    except (urlerror.URLError, TimeoutError, ValueError) as exc:
+        block = bool(strong or score >= 4)
+        reason = f"Checker model unavailable; heuristic fallback used. ({exc})"
+        if llm_trace is not None:
+            llm_trace["checker_error"] = str(exc)
+            llm_trace["checker_decision"] = "block" if block else "allow"
+            llm_trace["checker_reason"] = reason
+        return block, reason
+
+
+def run_response_code_scan(response_text: str, llm_trace: Optional[Dict[str, Any]] = None) -> Tuple[bool, str]:
+    text = response_text or ""
+    markers: List[str] = []
+    if "```" in text:
+        markers.append("```")
+    if "'''" in text:
+        markers.append("'''")
+
+    inline_code_count = len(INLINE_CODE_PATTERN.findall(text))
+    code_line_count = sum(
+        1
+        for line in text.splitlines()
+        if CODE_LINE_PATTERN.search(line) and re.search(r"[(){};=]", line)
+    )
+
+    # Inline backticks are common in conceptual explanations ("`for` loop") and
+    # should not alone trigger a policy block.
+    contains_code = bool(markers or code_line_count > 0)
+    reason_parts: List[str] = []
+    if markers:
+        reason_parts.append(f"Detected fenced code markers: {', '.join(markers)}.")
+    if inline_code_count > 0:
+        reason_parts.append(f"Detected {inline_code_count} inline code segment(s).")
+    if code_line_count > 0:
+        reason_parts.append(f"Detected {code_line_count} code-like line(s).")
+    if not reason_parts:
+        reason_parts.append("No code markers detected in model response.")
+    reason = " ".join(reason_parts).strip()
+
+    if llm_trace is not None:
+        llm_trace["checker_response_checked"] = True
+        llm_trace["checker_response_contains_code"] = contains_code
+        if markers:
+            llm_trace["checker_response_markers"] = markers
+        llm_trace["checker_response_reason"] = _clip_trace_text(reason)
+
+    return contains_code, reason
 
 
 def extract_source_citations(text: str) -> List[int]:
@@ -2393,8 +2602,28 @@ def _truncate_context_text(text: str, max_chars: int) -> str:
     return text[: max_chars - 3].rstrip() + "..."
 
 
+def _is_course_root_url(url: str) -> bool:
+    parsed = urlparse(url or "")
+    path_parts = [part for part in parsed.path.split("/") if part]
+    if len(path_parts) != 3:
+        return False
+    if path_parts[0].lower() != "courses":
+        return False
+    return bool(re.fullmatch(r"\d{2}(wi|sp|su|au)", path_parts[2].lower()))
+
+
+def _display_source_title(title: str, url: str) -> str:
+    raw = (title or "").strip()
+    if not raw:
+        raw = "Course Content"
+    lowered = raw.lower()
+    if _is_course_root_url(url) and (lowered in {"home", "course home", "cse 121", "cse121"}):
+        return "Calendar"
+    return raw
+
+
 def _format_context_title(result: SearchResult) -> str:
-    title = result.title
+    title = _display_source_title(result.title, result.url)
     if result.section and result.section != result.title:
         return f"{title} / {result.section}"
     return title
@@ -2546,49 +2775,176 @@ def _section_preview_line(text: str, max_chars: int = 180) -> str:
     return fallback[: max_chars - 3].rstrip() + "..."
 
 
+def _trace_links_from_sections(
+    sections: List[SearchResult],
+    limit: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    links: List[Dict[str, Any]] = []
+    cap = len(sections) if limit is None else max(0, int(limit))
+    for idx, section in enumerate(sections[:cap], start=1):
+        links.append(
+            {
+                "source": idx,
+                "title": _display_source_title(section.title, section.url),
+                "section": section.section,
+                "url": section.url,
+            }
+        )
+    return links
+
+
+def _build_router_prompt_preview(query: str, candidates: List[SearchResult]) -> str:
+    lines = [
+        f"[source {idx}] {_display_source_title(section.title, section.url)} - {section.url}"
+        for idx, section in enumerate(candidates, start=1)
+    ]
+    return (
+        "You are a routing model for a CSE 121 QA assistant.\n"
+        "Choose the most relevant source links for answering the user question.\n"
+        "You only get links, not source content.\n"
+        "Return strict JSON: {\"sources\": [n1, n2], \"rationale\": \"short reason\"}.\n\n"
+        f"Question:\n{query}\n\n"
+        "Source links:\n"
+        + "\n".join(lines)
+    )
+
+
+def _build_reader_prompt_preview(
+    query: str,
+    system_prompt: str,
+    links: List[Dict[str, Any]],
+    includes_preferred_answer: bool,
+) -> str:
+    link_lines = [
+        f"[source {item.get('source', idx)}] {item.get('title', 'Course Content')} - {item.get('url', '')}"
+        for idx, item in enumerate(links, start=1)
+    ]
+    preferred_flag = "yes" if includes_preferred_answer else "no"
+    return (
+        f"System instructions:\n{system_prompt}\n\n"
+        f"Student question:\n{query}\n\n"
+        f"Deterministic candidate answer included: {preferred_flag}\n\n"
+        "Source links provided to reader:\n"
+        + ("\n".join(link_lines) if link_lines else "(none)")
+    )
+
+
 def _premium_router_candidates(
     query: str,
     results: List[SearchResult],
     retriever: Optional[Retriever] = None,
+    context_mode: str = DEFAULT_LLM_CONTEXT_MODE,
 ) -> List[SearchResult]:
     all_sections = _context_sections_from_retriever(retriever, results)
     if not all_sections:
         return []
 
-    retrieval_keys = {_section_identity(result) for result in results[: llm_source_limit(results)]}
-    scored: List[Tuple[float, SearchResult]] = []
+    mode = normalize_llm_context_mode(context_mode)
+    if mode == "full":
+        # Keep full-mode candidate listing broad and order-stable for the router.
+        unique_by_url: Dict[str, SearchResult] = {}
+        for section in all_sections:
+            if section.url not in unique_by_url:
+                unique_by_url[section.url] = section
+        return list(unique_by_url.values())
+
+    query_token_set = set(query_terms(query, for_query=True))
+    intents = infer_query_intents(query)
+    retrieval_urls = {result.url for result in results[: llm_source_limit(results)]}
+    best_by_url: Dict[str, Tuple[float, SearchResult]] = {}
+
     for section in all_sections:
         score = _section_map_score(query, section)
-        if _section_identity(section) in retrieval_keys:
+        if section.url in retrieval_urls:
             score += 2.0
-        scored.append((score, section))
 
-    scored.sort(key=lambda item: item[0], reverse=True)
+        parsed = urlparse(section.url)
+        url_tokens = set(query_terms(f"{parsed.netloc} {parsed.path}", for_query=True))
+        if query_token_set and url_tokens:
+            score += len(query_token_set & url_tokens) * 1.6
+
+        path_lower = parsed.path.lower()
+        if intents["wants_staff"] and any(token in path_lower for token in ("staff", "instructor", "ta")):
+            score += 2.2
+        if intents["wants_time"] and any(token in path_lower for token in ("calendar", "schedule", "syllabus")):
+            score += 1.4
+        if intents["wants_assignments"] and any(token in path_lower for token in ("assignment", "assignments", "resub", "project")):
+            score += 1.4
+
+        existing = best_by_url.get(section.url)
+        if existing is None or score > existing[0]:
+            best_by_url[section.url] = (score, section)
+
+    scored: List[Tuple[float, SearchResult]] = sorted(best_by_url.values(), key=lambda item: item[0], reverse=True)
     top_sections = [section for score, section in scored if score > 0][:PREMIUM_ROUTER_MAX_CANDIDATES]
     if not top_sections:
         top_sections = [section for _, section in scored[:PREMIUM_ROUTER_MAX_CANDIDATES]]
     return top_sections
 
 
+def _fallback_router_source_ids(
+    query: str,
+    router_candidates: List[SearchResult],
+    retrieval_results: List[SearchResult],
+    max_picks: int,
+) -> List[int]:
+    if not router_candidates:
+        return []
+
+    limit = max(1, min(max_picks, len(router_candidates)))
+    selected: List[int] = []
+    seen_ids: set = set()
+
+    first_idx_by_url: Dict[str, int] = {}
+    for idx, candidate in enumerate(router_candidates, start=1):
+        first_idx_by_url.setdefault(candidate.url, idx)
+
+    # Prefer URLs already ranked highly by retrieval.
+    for result in retrieval_results:
+        source_id = first_idx_by_url.get(result.url)
+        if source_id is None or source_id in seen_ids:
+            continue
+        selected.append(source_id)
+        seen_ids.add(source_id)
+        if len(selected) >= limit:
+            return selected
+
+    # Fill remaining slots using query-to-section score.
+    scored_remaining: List[Tuple[float, int]] = []
+    for idx, candidate in enumerate(router_candidates, start=1):
+        if idx in seen_ids:
+            continue
+        scored_remaining.append((_section_map_score(query, candidate), idx))
+    scored_remaining.sort(key=lambda item: (item[0], -item[1]), reverse=True)
+
+    for _, source_id in scored_remaining:
+        if source_id in seen_ids:
+            continue
+        selected.append(source_id)
+        seen_ids.add(source_id)
+        if len(selected) >= limit:
+            break
+
+    return selected
+
+
 def _build_premium_router_prompt(query: str, candidates: List[SearchResult]) -> str:
     index_lines: List[str] = []
     for idx, section in enumerate(candidates, start=1):
-        source_title = _format_context_title(section)
-        preview = _section_preview_line(section.text)
-        index_lines.append(
-            f"[source {idx}] {source_title} - {section.url}\nPreview: {preview}"
-        )
+        alias = _display_source_title(section.title, section.url)
+        index_lines.append(f"[source {idx}] {alias} - {section.url}")
 
     section_index = "\n\n".join(index_lines)
     return (
         "You are a routing model for a CSE 121 QA assistant.\n"
-        "Choose the most relevant sections for answering the user question.\n"
+        "Choose the most relevant source links for answering the user question.\n"
+        "You only get links, not source content.\n"
         "Return only strict JSON with this shape: "
-        "{\"sources\": [n1, n2]}. No markdown, no prose.\n"
+        "{\"sources\": [n1, n2], \"rationale\": \"short reason\"}. No markdown, no prose.\n"
         f"Select up to {PREMIUM_ROUTER_TOP_SOURCES} sources.\n"
         "Use source numbers from the list below.\n\n"
         f"Question:\n{query}\n\n"
-        f"Section candidates:\n{section_index}"
+        f"Source links:\n{section_index}"
     )
 
 
@@ -2644,33 +3000,81 @@ def build_llm_answer(
 
     context_block = ""
     max_source_num = 0
+    reader_sections_for_trace: List[SearchResult] = []
 
     if premium_mode:
-        router_candidates = _premium_router_candidates(query, results, retriever)
+        router_candidates = _premium_router_candidates(
+            query,
+            results,
+            retriever,
+            context_mode=context_mode,
+        )
         if not router_candidates:
             return None
 
         router_prompt = _build_premium_router_prompt(query, router_candidates)
         if llm_trace is not None:
             llm_trace["router_prompt"] = _clip_trace_text(router_prompt)
+            llm_trace["router_candidate_links"] = _trace_links_from_sections(router_candidates)
+            llm_trace["router_prompt_preview"] = _clip_trace_text(
+                _build_router_prompt_preview(query, router_candidates)
+            )
 
         selected_ids: List[int] = []
+        parsed_router_rationale = ""
+        router_used_fallback = False
+        router_rationale = ""
         try:
             router_payload = request_ollama_generate_for_role("router", router_prompt)
             router_text = _extract_ollama_output_text(router_payload)
             router_payload_thinking = _extract_ollama_thinking_text(router_payload)
             router_cleaned, router_inline_thinking = _split_think_tags(router_text)
             router_thinking = router_payload_thinking or router_inline_thinking
+            if router_thinking:
+                router_rationale = router_thinking
             if llm_trace is not None:
                 llm_trace["router_raw_response"] = _clip_trace_text(router_text)
                 if router_thinking:
                     llm_trace["router_thinking"] = _clip_trace_text(router_thinking)
-            selected_ids = _parse_router_source_ids(router_cleaned, len(router_candidates))
+            selected_ids, parsed_router_rationale = _parse_router_selection(
+                router_cleaned,
+                len(router_candidates),
+            )
+            if parsed_router_rationale:
+                router_rationale = parsed_router_rationale
+            if llm_trace is not None and parsed_router_rationale and not router_thinking:
+                llm_trace["router_thinking"] = _clip_trace_text(parsed_router_rationale)
         except (urlerror.URLError, TimeoutError, ValueError) as exc:
             print(f"Ollama router call failed; falling back to premium heuristics. Reason: {exc}", file=sys.stderr)
+            router_used_fallback = True
 
         if not selected_ids:
-            selected_ids = list(range(1, min(PREMIUM_ROUTER_TOP_SOURCES, len(router_candidates)) + 1))
+            router_used_fallback = True
+            selected_ids = _fallback_router_source_ids(
+                query,
+                router_candidates,
+                results,
+                PREMIUM_ROUTER_TOP_SOURCES,
+            )
+            if not selected_ids:
+                selected_ids = list(range(1, min(PREMIUM_ROUTER_TOP_SOURCES, len(router_candidates)) + 1))
+        if llm_trace is not None and not llm_trace.get("router_thinking"):
+            if router_used_fallback:
+                llm_trace["router_thinking"] = (
+                    "Router reasoning unavailable from model output. "
+                    "Falling back to top-ranked candidate links."
+                )
+                router_rationale = llm_trace["router_thinking"]
+            else:
+                llm_trace["router_thinking"] = (
+                    "Router selected links but did not return an explicit rationale."
+                )
+                router_rationale = llm_trace["router_thinking"]
+        if llm_trace is not None:
+            if not router_rationale and llm_trace.get("router_thinking"):
+                router_rationale = str(llm_trace.get("router_thinking", "")).strip()
+            if router_rationale:
+                llm_trace["router_rationale"] = _clip_trace_text(router_rationale)
         selected_sections = [
             router_candidates[source_num - 1]
             for source_num in selected_ids
@@ -2678,12 +3082,13 @@ def build_llm_answer(
         ]
         if not selected_sections:
             return None
+        reader_sections_for_trace = selected_sections
         if llm_trace is not None:
             llm_trace["router_selected_sources"] = [
                 {
                     "source": idx,
                     "doc_id": section.doc_id,
-                    "title": section.title,
+                    "title": _display_source_title(section.title, section.url),
                     "section": section.section,
                     "url": section.url,
                     "chunk_index": section.chunk_index,
@@ -2693,6 +3098,7 @@ def build_llm_answer(
                 }
                 for idx, section in enumerate(selected_sections, start=1)
             ]
+            llm_trace["router_to_reader_links"] = _trace_links_from_sections(selected_sections)
 
         context_block, max_source_num = _build_premium_reader_context(selected_sections)
     else:
@@ -2702,6 +3108,7 @@ def build_llm_answer(
             retriever,
             context_mode=context_mode,
         )
+        reader_sections_for_trace = results[: llm_source_limit(results)]
 
     if not context_block.strip():
         return NO_ANSWER_TEXT
@@ -2709,13 +3116,6 @@ def build_llm_answer(
     if premium_mode:
         system_prompt = (
             "You are the reader model for a CSE 121 course assistant.\n"
-            "Use only the provided selected course sections.\n"
-            f"If the evidence is insufficient or ambiguous, reply exactly: {NO_ANSWER_SENTINEL}\n"
-            "If the user question is ambiguous, ask one concise clarification question and stop.\n"
-            "Write polished, student-friendly output in complete sentences.\n"
-            "Prefer one concise paragraph. If listing multiple items, use a short lead sentence then bullet points.\n"
-            "Do not include [source N] markers in the answer text.\n"
-            "Do not infer dates, times, names, or policy details unless explicitly present in the provided content."
         )
     else:
         system_prompt = (
@@ -2732,6 +3132,7 @@ def build_llm_answer(
         f"Question:\n{query}\n\n"
         f"Snippets from the course website:\n{context_block}"
     ]
+    includes_preferred_answer = bool(preferred_answer and preferred_answer != NO_ANSWER_TEXT)
     if preferred_answer and preferred_answer != NO_ANSWER_TEXT:
         user_parts.append(
             "Candidate factual answer from deterministic retrieval rules:\n"
@@ -2745,6 +3146,16 @@ def build_llm_answer(
         llm_trace["prompt"] = _clip_trace_text(prompt)
         llm_trace["context_mode"] = context_mode
         llm_trace["premium_mode"] = premium_mode
+        reader_links = _trace_links_from_sections(reader_sections_for_trace)
+        llm_trace["reader_links"] = reader_links
+        llm_trace["reader_prompt_preview"] = _clip_trace_text(
+            _build_reader_prompt_preview(
+                query,
+                system_prompt,
+                reader_links,
+                includes_preferred_answer,
+            )
+        )
 
     try:
         payload = request_ollama_generate_for_role("reader", prompt)
@@ -2894,6 +3305,7 @@ def build_chat_payload(
     query_for_search, rewrite_notes, _ = rewrite_query_with_memory(stitched_query, history)
     memory_notes.extend(rewrite_notes)
     query_lower = query_for_search.lower()
+    is_premium_llm_mode = resolved_context_mode in {"full", "section_map"}
     label_targets = query_label_targets(extract_query_labels(query_for_search))
     wants_name_query = any(
         phrase in query_lower for phrase in ("what is", "what's", "name", "called", "title")
@@ -2906,37 +3318,52 @@ def build_chat_payload(
     selection = collect_evidence(query_for_search, results)
     label_exact_evidence = has_exact_label_evidence(selection.lines, label_targets)
 
-    deterministic_answer = build_deterministic_label_answer(query_for_search, selection, results)
-    retriever_metadata = getattr(retriever, "metadata", [])
-    deterministic_fact_answer = build_deterministic_fact_answer(
-        query_for_search,
-        results,
-        retriever_metadata,
-    )
     fallback_mode = "no_answer"
     fallback_answer = NO_ANSWER_TEXT
-    if deterministic_answer is not None:
-        fallback_answer = deterministic_answer
-        fallback_mode = "deterministic"
-    elif deterministic_fact_answer is not None:
-        fallback_answer = deterministic_fact_answer
-        fallback_mode = "deterministic"
-    elif label_targets:
-        # For explicit label questions, avoid hallucinations by requiring exact
-        # label evidence and returning extractive text only from that evidence.
-        if label_exact_evidence and selection.lines:
+    if not is_premium_llm_mode:
+        deterministic_answer = build_deterministic_label_answer(query_for_search, selection, results)
+        retriever_metadata = getattr(retriever, "metadata", [])
+        deterministic_fact_answer = build_deterministic_fact_answer(
+            query_for_search,
+            results,
+            retriever_metadata,
+        )
+        if deterministic_answer is not None:
+            fallback_answer = deterministic_answer
+            fallback_mode = "deterministic"
+        elif deterministic_fact_answer is not None:
+            fallback_answer = deterministic_fact_answer
+            fallback_mode = "deterministic"
+        elif label_targets:
+            # For explicit label questions, avoid hallucinations by requiring exact
+            # label evidence and returning extractive text only from that evidence.
+            if label_exact_evidence and selection.lines:
+                fallback_answer = build_extractive_answer(selection)
+                fallback_mode = "extractive"
+        elif selection.confident:
             fallback_answer = build_extractive_answer(selection)
             fallback_mode = "extractive"
-    elif selection.confident:
-        fallback_answer = build_extractive_answer(selection)
-        fallback_mode = "extractive"
 
-    is_premium_llm_mode = resolved_context_mode in {"full", "section_map"}
     answer_mode = fallback_mode
     answer = fallback_answer
     llm_trace: Optional[Dict[str, Any]] = {} if (include_llm_trace or is_premium_llm_mode) else None
+    if llm_trace is not None:
+        llm_trace["user_question"] = original_message
+        llm_trace["query_used_for_retrieval"] = query_for_search
+
     should_attempt_llm = ALWAYS_ATTEMPT_LLM or fallback_mode == "no_answer" or is_premium_llm_mode
-    if should_attempt_llm:
+    code_guard_blocked = False
+    code_guard_reason = ""
+    if should_attempt_llm and ENABLE_CODE_GUARD_CHECKER:
+        code_guard_blocked, code_guard_reason = run_code_guard_checker(original_message, llm_trace)
+        if code_guard_blocked:
+            answer = CODE_GUARD_BLOCK_TEXT
+            answer_mode = "policy"
+            memory_notes.append("Blocked code-feedback request via checker model.")
+            if code_guard_reason:
+                memory_notes.append(f"Checker reason: {code_guard_reason}")
+
+    if should_attempt_llm and not code_guard_blocked:
         if resolved_context_mode != "retrieval":
             memory_notes.append(f"LLM context mode: {resolved_context_mode}.")
         llm_answer = build_llm_answer(
@@ -2968,6 +3395,25 @@ def build_chat_payload(
                 answer = llm_answer
                 answer_mode = "llm" if llm_answer != NO_ANSWER_TEXT else "no_answer"
 
+    response_contains_code = False
+    response_scan_reason = ""
+    if answer_mode != "policy":
+        response_contains_code, response_scan_reason = run_response_code_scan(answer, llm_trace)
+        if response_contains_code:
+            answer = CODE_GUARD_BLOCK_TEXT
+            answer_mode = "policy"
+            memory_notes.append("Blocked response containing code markers via checker scan.")
+            if response_scan_reason:
+                memory_notes.append(f"Response scan reason: {response_scan_reason}")
+            if llm_trace is not None:
+                llm_trace["checker_decision"] = "block"
+                if response_scan_reason:
+                    llm_trace["checker_reason"] = _clip_trace_text(response_scan_reason)
+
+    if llm_trace is not None:
+        llm_trace["final_answer_mode"] = answer_mode
+        llm_trace["final_answer"] = _clip_trace_text(answer)
+
     evidence_by_doc_id: Dict[int, List[str]] = defaultdict(list)
     for line, source_num in selection.lines:
         source_index = source_num - 1
@@ -2984,7 +3430,9 @@ def build_chat_payload(
             if isinstance(item, dict)
         ]
 
-    if answer_mode == "deterministic":
+    if answer_mode == "policy":
+        source_results = []
+    elif answer_mode == "deterministic":
         support_results: List[SearchResult] = []
         if hasattr(retriever, "find_supporting_results"):
             try:
@@ -3005,7 +3453,9 @@ def build_chat_payload(
             list(merged_by_doc_id.values()),
         )[:TOP_K]
 
-    if answer_mode == "llm" and is_premium_llm_mode and premium_router_sources:
+    if answer_mode == "policy":
+        pass
+    elif answer_mode == "llm" and is_premium_llm_mode and premium_router_sources:
         for rank, item in enumerate(premium_router_sources[:TOP_K], start=1):
             snippet = normalize_line(str(item.get("snippet", "") or "")).strip()
             if not snippet:
@@ -3024,7 +3474,10 @@ def build_chat_payload(
                 score = 0.0
             source_payload = {
                 "rank": rank,
-                "title": str(item.get("title", "") or "Course Content"),
+                "title": _display_source_title(
+                    str(item.get("title", "") or "Course Content"),
+                    str(item.get("url", "") or ""),
+                ),
                 "url": str(item.get("url", "") or ""),
                 "chunk_index": chunk_index,
                 "section": str(item.get("section", "") or ""),
@@ -3043,7 +3496,7 @@ def build_chat_payload(
             evidence_lines = evidence_by_doc_id.get(result.doc_id, [])
             source_payload = {
                 "rank": rank,
-                "title": result.title,
+                "title": _display_source_title(result.title, result.url),
                 "url": result.url,
                 "chunk_index": result.chunk_index,
                 "section": result.section,
@@ -3075,7 +3528,7 @@ def build_chat_payload(
         "answer": answer,
         "sources": sources,
         "answer_mode": answer_mode,
-        "confidence": round(selection.top_score, 3),
+        "confidence": 0.0 if answer_mode == "policy" else round(selection.top_score, 3),
     }
     if memory_notes:
         payload["memory_applied"] = memory_notes

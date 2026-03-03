@@ -236,6 +236,253 @@ class AnswerLogicTests(unittest.TestCase):
         self.assertIn("Expanded section content for likely relevant paths", context_map)
         self.assertGreaterEqual(source_count_map, 2)
 
+    def test_premium_router_candidates_section_map_are_url_unique_and_staff_relevant(self):
+        class FakeRetriever:
+            metadata = [
+                {
+                    "text": "## Policies\nGeneral course policies and logistics.",
+                    "metadata": {
+                        "url": "https://courses.cs.washington.edu/courses/cse121/26wi/syllabus/",
+                        "title": "Syllabus",
+                        "section": "Policies",
+                        "chunk_index": 0,
+                    },
+                },
+                {
+                    "text": "## Calendar\nWeekly lecture plan and checkpoints.",
+                    "metadata": {
+                        "url": "https://courses.cs.washington.edu/courses/cse121/26wi/syllabus/",
+                        "title": "Syllabus",
+                        "section": "Calendar",
+                        "chunk_index": 1,
+                    },
+                },
+                {
+                    "text": "## Course Staff\nInstructor: Miya Natsuhara",
+                    "metadata": {
+                        "url": "https://courses.cs.washington.edu/courses/cse121/26wi/staff/",
+                        "title": "Course Staff",
+                        "section": "Course Staff",
+                        "chunk_index": 0,
+                    },
+                },
+            ]
+
+        candidates = answer_service._premium_router_candidates(
+            "Who is the course instructor?",
+            results=[],
+            retriever=FakeRetriever(),
+            context_mode="section_map",
+        )
+
+        urls = [candidate.url for candidate in candidates]
+        self.assertEqual(len(urls), len(set(urls)))
+        self.assertTrue(any("/staff/" in url for url in urls[:2]))
+
+    def test_premium_router_candidates_full_mode_preserves_source_order(self):
+        class FakeRetriever:
+            metadata = [
+                {
+                    "text": "## Policies\nGeneral course policies and logistics.",
+                    "metadata": {
+                        "url": "https://courses.cs.washington.edu/courses/cse121/26wi/syllabus/",
+                        "title": "Syllabus",
+                        "section": "Policies",
+                        "chunk_index": 0,
+                    },
+                },
+                {
+                    "text": "## Course Staff\nInstructor: Miya Natsuhara",
+                    "metadata": {
+                        "url": "https://courses.cs.washington.edu/courses/cse121/26wi/staff/",
+                        "title": "Course Staff",
+                        "section": "Course Staff",
+                        "chunk_index": 0,
+                    },
+                },
+                {
+                    "text": "## Calendar\nWeekly lecture plan and checkpoints.",
+                    "metadata": {
+                        "url": "https://courses.cs.washington.edu/courses/cse121/26wi/syllabus/",
+                        "title": "Syllabus",
+                        "section": "Calendar",
+                        "chunk_index": 1,
+                    },
+                },
+                {
+                    "text": "## Assignments\nProject pages and due dates.",
+                    "metadata": {
+                        "url": "https://courses.cs.washington.edu/courses/cse121/26wi/assignments/",
+                        "title": "Assignments",
+                        "section": "Assignments",
+                        "chunk_index": 0,
+                    },
+                },
+            ]
+
+        candidates = answer_service._premium_router_candidates(
+            "Who is the course instructor?",
+            results=[],
+            retriever=FakeRetriever(),
+            context_mode="full",
+        )
+
+        self.assertEqual(
+            [candidate.url for candidate in candidates],
+            [
+                "https://courses.cs.washington.edu/courses/cse121/26wi/syllabus/",
+                "https://courses.cs.washington.edu/courses/cse121/26wi/staff/",
+                "https://courses.cs.washington.edu/courses/cse121/26wi/assignments/",
+            ],
+        )
+
+    def test_fallback_router_source_ids_prefers_retrieval_urls(self):
+        candidates = [
+            answer_service.SearchResult(
+                doc_id=0,
+                text="Home",
+                url="https://courses.cs.washington.edu/courses/cse121/26wi/",
+                title="CSE 121",
+                chunk_index=0,
+                distance=0.3,
+                score=3.0,
+                section="Home",
+            ),
+            answer_service.SearchResult(
+                doc_id=1,
+                text="Staff",
+                url="https://courses.cs.washington.edu/courses/cse121/26wi/staff/",
+                title="Course Staff",
+                chunk_index=0,
+                distance=0.1,
+                score=9.0,
+                section="Course Staff",
+            ),
+            answer_service.SearchResult(
+                doc_id=2,
+                text="Syllabus",
+                url="https://courses.cs.washington.edu/courses/cse121/26wi/syllabus/",
+                title="Syllabus",
+                chunk_index=0,
+                distance=0.2,
+                score=7.0,
+                section="Policies",
+            ),
+        ]
+        retrieval_results = [
+            answer_service.SearchResult(
+                doc_id=9,
+                text="Top staff hit",
+                url="https://courses.cs.washington.edu/courses/cse121/26wi/staff/",
+                title="Course Staff",
+                chunk_index=0,
+                distance=0.05,
+                score=12.0,
+                section="Course Staff",
+            ),
+            answer_service.SearchResult(
+                doc_id=10,
+                text="Secondary syllabus hit",
+                url="https://courses.cs.washington.edu/courses/cse121/26wi/syllabus/",
+                title="Syllabus",
+                chunk_index=0,
+                distance=0.12,
+                score=9.5,
+                section="Policies",
+            ),
+        ]
+
+        selected_ids = answer_service._fallback_router_source_ids(
+            query="Who is the instructor?",
+            router_candidates=candidates,
+            retrieval_results=retrieval_results,
+            max_picks=2,
+        )
+        self.assertEqual(selected_ids, [2, 3])
+
+    def test_display_source_title_maps_course_root_home_to_calendar(self):
+        title = answer_service._display_source_title(
+            "CSE 121",
+            "https://courses.cs.washington.edu/courses/cse121/26wi/",
+        )
+        self.assertEqual(title, "Calendar")
+
+        title_home = answer_service._display_source_title(
+            "Home",
+            "https://courses.cs.washington.edu/courses/cse121/26wi/",
+        )
+        self.assertEqual(title_home, "Calendar")
+
+        non_root = answer_service._display_source_title(
+            "CSE 121",
+            "https://courses.cs.washington.edu/courses/cse121/26wi/staff/",
+        )
+        self.assertEqual(non_root, "CSE 121")
+
+    def test_build_chat_payload_renames_root_source_title_to_calendar(self):
+        class FakeRetriever:
+            def __init__(self):
+                self.metadata = []
+
+            def search(self, _query, _top_k):
+                return [
+                    answer_service.SearchResult(
+                        doc_id=0,
+                        text="General course overview and calendar links.",
+                        url="https://courses.cs.washington.edu/courses/cse121/26wi/",
+                        title="CSE 121",
+                        chunk_index=0,
+                        distance=0.2,
+                        score=6.0,
+                        section="Home",
+                    )
+                ]
+
+        payload = answer_service.build_chat_payload(
+            message="Where is the calendar?",
+            retriever=FakeRetriever(),
+        )
+        self.assertGreaterEqual(len(payload.get("sources", [])), 1)
+        self.assertEqual(payload["sources"][0].get("title"), "Calendar")
+
+    def test_premium_router_prompt_includes_alias_and_url(self):
+        candidates = [
+            answer_service.SearchResult(
+                doc_id=0,
+                text="root",
+                url="https://courses.cs.washington.edu/courses/cse121/26wi/",
+                title="CSE 121",
+                chunk_index=0,
+                distance=0.0,
+                score=0.0,
+                section="Home",
+            ),
+            answer_service.SearchResult(
+                doc_id=1,
+                text="staff",
+                url="https://courses.cs.washington.edu/courses/cse121/26wi/staff/",
+                title="Course Staff",
+                chunk_index=0,
+                distance=0.0,
+                score=0.0,
+                section="Course Staff",
+            ),
+        ]
+
+        prompt = answer_service._build_premium_router_prompt(
+            "Who is the instructor?",
+            candidates,
+        )
+        self.assertIn(
+            "[source 1] Calendar - https://courses.cs.washington.edu/courses/cse121/26wi/",
+            prompt,
+        )
+        self.assertIn(
+            "[source 2] Course Staff - https://courses.cs.washington.edu/courses/cse121/26wi/staff/",
+            prompt,
+        )
+        self.assertIn("You only get links, not source content.", prompt)
+
     def test_build_llm_answer_premium_relaxes_citation_requirement(self):
         result = answer_service.SearchResult(
             doc_id=0,
@@ -334,6 +581,70 @@ class AnswerLogicTests(unittest.TestCase):
         self.assertIn("thinking", trace)
         self.assertIn("Need the date from source.", trace.get("thinking", ""))
 
+    def test_build_llm_answer_premium_trace_includes_prompt_previews_and_links(self):
+        result = answer_service.SearchResult(
+            doc_id=0,
+            text="Quiz 2 is on Thu 03/05 in your section.",
+            url="https://courses.cs.washington.edu/courses/cse121/26wi/",
+            title="CSE 121",
+            chunk_index=0,
+            distance=0.2,
+            score=7.5,
+            section="Calendar",
+        )
+        selection = answer_service.EvidenceSelection(lines=[], top_score=8.0, confident=True)
+        trace = {}
+
+        original_model_resolver = answer_service.preferred_ollama_model
+        original_generate = answer_service.request_ollama_generate
+        original_citation_flag = answer_service.LLM_REQUIRE_VALID_CITATIONS
+
+        def fake_generate(_model, prompt):
+            if "routing model for a CSE 121 QA assistant" in prompt:
+                return {
+                    "response": (
+                        "{\"sources\": [1], "
+                        "\"rationale\": \"The URL path suggests this page likely contains quiz schedule details.\"}"
+                    )
+                }
+            return {"response": "Quiz 2 is on Thu 03/05."}
+
+        answer_service.preferred_ollama_model = lambda: "mock-model"
+        answer_service.request_ollama_generate = fake_generate
+        answer_service.LLM_REQUIRE_VALID_CITATIONS = True
+        try:
+            answer = answer_service.build_llm_answer(
+                "When is Quiz 2?",
+                selection,
+                [result],
+                retriever=None,
+                preferred_answer=None,
+                context_mode="full",
+                premium_mode=True,
+                llm_trace=trace,
+            )
+        finally:
+            answer_service.preferred_ollama_model = original_model_resolver
+            answer_service.request_ollama_generate = original_generate
+            answer_service.LLM_REQUIRE_VALID_CITATIONS = original_citation_flag
+
+        self.assertEqual(answer, "Quiz 2 is on Thu 03/05.")
+        self.assertIn("router_prompt_preview", trace)
+        self.assertIn("reader_prompt_preview", trace)
+        self.assertIn("router_thinking", trace)
+        self.assertIn("router_rationale", trace)
+        self.assertIn("URL path suggests", trace.get("router_thinking", ""))
+        self.assertIn("URL path suggests", trace.get("router_rationale", ""))
+        self.assertTrue(trace.get("router_candidate_links"))
+        self.assertTrue(trace.get("router_to_reader_links"))
+        self.assertTrue(trace.get("reader_links"))
+        self.assertNotIn("Preview:", trace.get("router_prompt_preview", ""))
+        self.assertNotIn("Quiz 2 is on Thu 03/05 in your section.", trace.get("router_prompt_preview", ""))
+        self.assertEqual(
+            trace["router_to_reader_links"][0].get("url"),
+            "https://courses.cs.washington.edu/courses/cse121/26wi/",
+        )
+
     def test_premium_mode_skips_preferred_answer_and_keeps_clarification(self):
         class FakeRetriever:
             def __init__(self):
@@ -429,6 +740,165 @@ class AnswerLogicTests(unittest.TestCase):
         self.assertIn("llm_trace", payload)
         self.assertEqual(payload["llm_trace"].get("prompt"), "prompt text")
         self.assertEqual(payload["llm_trace"].get("thinking"), "thinking text")
+        self.assertEqual(payload["llm_trace"].get("final_answer"), "Quiz 2 is on Thu 03/05. [source 1]")
+        self.assertEqual(payload["llm_trace"].get("final_answer_mode"), "llm")
+        self.assertFalse(payload["llm_trace"].get("checker_response_contains_code"))
+        self.assertIn("checker_response_reason", payload["llm_trace"])
+
+    def test_run_response_code_scan_detects_triple_quote_fences(self):
+        trace = {}
+        contains_code, reason = answer_service.run_response_code_scan(
+            "Here is a snippet:\n'''python\nx = 1\n'''",
+            llm_trace=trace,
+        )
+        self.assertTrue(contains_code)
+        self.assertIn("'''", trace.get("checker_response_markers", []))
+        self.assertTrue(trace.get("checker_response_contains_code"))
+        self.assertIn("fenced code markers", reason.lower())
+
+    def test_build_chat_payload_checker_blocks_code_feedback(self):
+        class FakeRetriever:
+            def search(self, _query, _top_k):
+                return [
+                    answer_service.SearchResult(
+                        doc_id=0,
+                        text="General course information.",
+                        url="https://courses.cs.washington.edu/courses/cse121/26wi/",
+                        title="CSE 121",
+                        chunk_index=0,
+                        distance=0.4,
+                        score=4.0,
+                        section="Overview",
+                    )
+                ]
+
+        original_model_resolver = answer_service.preferred_ollama_model
+        original_generate = answer_service.request_ollama_generate
+        original_code_guard_flag = answer_service.ENABLE_CODE_GUARD_CHECKER
+
+        def fake_generate(_model, prompt):
+            if "classifier for a CSE 121 course logistics assistant" in prompt:
+                return {
+                    "response": (
+                        "{\"block\": true, "
+                        "\"reason\": \"This is a debugging request with a code snippet.\"}"
+                    )
+                }
+            self.fail("Reader/router should not be called when checker blocks.")
+
+        answer_service.preferred_ollama_model = lambda: "mock-model"
+        answer_service.request_ollama_generate = fake_generate
+        answer_service.ENABLE_CODE_GUARD_CHECKER = True
+        try:
+            payload = answer_service.build_chat_payload(
+                message="Can you debug this code?\n```java\nint x = 0;\n```",
+                retriever=FakeRetriever(),
+                include_llm_trace=True,
+            )
+        finally:
+            answer_service.preferred_ollama_model = original_model_resolver
+            answer_service.request_ollama_generate = original_generate
+            answer_service.ENABLE_CODE_GUARD_CHECKER = original_code_guard_flag
+
+        self.assertEqual(payload.get("answer_mode"), "policy")
+        self.assertEqual(payload.get("answer"), answer_service.CODE_GUARD_BLOCK_TEXT)
+        self.assertEqual(payload.get("sources"), [])
+        self.assertEqual(payload.get("confidence"), 0.0)
+        self.assertIn("llm_trace", payload)
+        self.assertEqual(payload["llm_trace"].get("checker_decision"), "block")
+        self.assertIn("debugging request", payload["llm_trace"].get("checker_reason", ""))
+
+    def test_build_chat_payload_blocks_model_response_with_code_markers(self):
+        class FakeRetriever:
+            def search(self, _query, _top_k):
+                return [
+                    answer_service.SearchResult(
+                        doc_id=0,
+                        text="General course information.",
+                        url="https://courses.cs.washington.edu/courses/cse121/26wi/",
+                        title="CSE 121",
+                        chunk_index=0,
+                        distance=0.3,
+                        score=4.0,
+                        section="Overview",
+                    )
+                ]
+
+        original_llm = answer_service.build_llm_answer
+        original_checker_flag = answer_service.ENABLE_CODE_GUARD_CHECKER
+
+        def fake_llm(*_args, llm_trace=None, **_kwargs):
+            if llm_trace is not None:
+                llm_trace["prompt"] = "prompt text"
+            return "```python\nprint('hello')\n```"
+
+        answer_service.build_llm_answer = fake_llm
+        answer_service.ENABLE_CODE_GUARD_CHECKER = False
+        try:
+            payload = answer_service.build_chat_payload(
+                message="Who is the instructor?",
+                retriever=FakeRetriever(),
+                include_llm_trace=True,
+            )
+        finally:
+            answer_service.build_llm_answer = original_llm
+            answer_service.ENABLE_CODE_GUARD_CHECKER = original_checker_flag
+
+        self.assertEqual(payload.get("answer_mode"), "policy")
+        self.assertEqual(payload.get("answer"), answer_service.CODE_GUARD_BLOCK_TEXT)
+        self.assertEqual(payload.get("sources"), [])
+        self.assertEqual(payload.get("confidence"), 0.0)
+        self.assertIn("llm_trace", payload)
+        self.assertTrue(payload["llm_trace"].get("checker_response_contains_code"))
+        self.assertEqual(payload["llm_trace"].get("checker_decision"), "block")
+        self.assertIn("fenced code markers", payload["llm_trace"].get("checker_reason", "").lower())
+        self.assertEqual(payload["llm_trace"].get("final_answer_mode"), "policy")
+        self.assertEqual(payload["llm_trace"].get("final_answer"), answer_service.CODE_GUARD_BLOCK_TEXT)
+
+    def test_build_chat_payload_allows_inline_code_style_without_fences(self):
+        class FakeRetriever:
+            def search(self, _query, _top_k):
+                return [
+                    answer_service.SearchResult(
+                        doc_id=0,
+                        text="General course information.",
+                        url="https://courses.cs.washington.edu/courses/cse121/26wi/",
+                        title="CSE 121",
+                        chunk_index=0,
+                        distance=0.3,
+                        score=4.0,
+                        section="Overview",
+                    )
+                ]
+
+        original_llm = answer_service.build_llm_answer
+        original_checker_flag = answer_service.ENABLE_CODE_GUARD_CHECKER
+
+        def fake_llm(*_args, llm_trace=None, **_kwargs):
+            if llm_trace is not None:
+                llm_trace["prompt"] = "prompt text"
+            return "A `for` loop repeats a block of code while a condition is true."
+
+        answer_service.build_llm_answer = fake_llm
+        answer_service.ENABLE_CODE_GUARD_CHECKER = False
+        try:
+            payload = answer_service.build_chat_payload(
+                message="What is a for loop?",
+                retriever=FakeRetriever(),
+                include_llm_trace=True,
+            )
+        finally:
+            answer_service.build_llm_answer = original_llm
+            answer_service.ENABLE_CODE_GUARD_CHECKER = original_checker_flag
+
+        self.assertEqual(payload.get("answer_mode"), "llm")
+        self.assertEqual(
+            payload.get("answer"),
+            "A `for` loop repeats a block of code while a condition is true.",
+        )
+        self.assertIn("llm_trace", payload)
+        self.assertFalse(payload["llm_trace"].get("checker_response_contains_code"))
+        self.assertEqual(payload["llm_trace"].get("final_answer_mode"), "llm")
 
     def test_build_chat_payload_uses_router_sources_for_premium_llm_answers(self):
         class FakeRetriever:
@@ -564,25 +1034,29 @@ class AnswerLogicTests(unittest.TestCase):
         original_model = answer_service.OLLAMA_MODEL
         original_router_model = answer_service.OLLAMA_ROUTER_MODEL
         original_reader_model = answer_service.OLLAMA_READER_MODEL
+        original_checker_model = answer_service.OLLAMA_CHECKER_MODEL
         calls = []
 
         answer_service.OLLAMA_MODEL = "base-model"
         answer_service.OLLAMA_ROUTER_MODEL = "router-model"
         answer_service.OLLAMA_READER_MODEL = "reader-model"
+        answer_service.OLLAMA_CHECKER_MODEL = "checker-model"
         answer_service.request_ollama_generate = (
             lambda model, _prompt: calls.append(model) or {"response": "ok"}
         )
         try:
             answer_service.request_ollama_generate_for_role("router", "pick sections")
             answer_service.request_ollama_generate_for_role("reader", "write answer")
+            answer_service.request_ollama_generate_for_role("checker", "classify query")
             answer_service.request_ollama_generate_for_role("other", "fallback")
         finally:
             answer_service.request_ollama_generate = original_generate
             answer_service.OLLAMA_MODEL = original_model
             answer_service.OLLAMA_ROUTER_MODEL = original_router_model
             answer_service.OLLAMA_READER_MODEL = original_reader_model
+            answer_service.OLLAMA_CHECKER_MODEL = original_checker_model
 
-        self.assertEqual(calls, ["router-model", "reader-model", "base-model"])
+        self.assertEqual(calls, ["router-model", "reader-model", "checker-model", "base-model"])
 
     def test_clarification_detection_and_stitch_heuristic(self):
         self.assertTrue(

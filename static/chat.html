@@ -62,6 +62,9 @@
         --toggle-knob-b: #f2a35f;
         --toggle-knob-glow: rgba(255, 191, 118, 0.55);
         --toggle-knob-crater: rgba(66, 86, 143, 0.35);
+        --thinking-panel-inner: rgba(6, 10, 22, 0.5);
+        --thinking-content-bg: rgba(255, 255, 255, 0.03);
+        --thinking-content-border: rgba(146, 173, 255, 0.24);
       }
 
       body.theme-light {
@@ -113,6 +116,9 @@
         --toggle-knob-b: #b9ccff;
         --toggle-knob-glow: rgba(126, 156, 236, 0.45);
         --toggle-knob-crater: rgba(83, 109, 184, 0.36);
+        --thinking-panel-inner: rgba(246, 251, 255, 0.92);
+        --thinking-content-bg: rgba(212, 227, 255, 0.62);
+        --thinking-content-border: rgba(112, 142, 224, 0.34);
       }
 
       * {
@@ -126,7 +132,7 @@
       }
 
       body {
-        font-family: "Space Grotesk", "Avenir Next Condensed", "Trebuchet MS", sans-serif;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
         color: var(--text-main);
         background:
           radial-gradient(980px 620px at 50% 28%, var(--bg-accent-1), transparent 70%),
@@ -362,17 +368,19 @@
       }
 
       .chat-shell {
-        width: min(980px, 100%);
+        --thinking-reserve: 0px;
+        width: min(980px, calc(100% - var(--thinking-reserve)));
         margin: 0 auto;
         transition:
           width 320ms var(--theme-ease),
+          margin-left 320ms var(--theme-ease),
           margin-right 320ms var(--theme-ease);
       }
 
       body.thinking-mode .chat-shell {
-        width: min(980px, calc(100% - clamp(340px, 46vw, 600px)));
-        margin-right: clamp(332px, 45vw, 584px);
-        margin-left: auto;
+        --thinking-reserve: clamp(348px, 47vw, 620px);
+        margin-left: 0;
+        margin-right: calc(var(--thinking-reserve) - 16px);
       }
 
       .console {
@@ -414,7 +422,7 @@
       }
 
       .thinking-panel-inner {
-        background: rgba(6, 10, 22, 0.5);
+        background: var(--thinking-panel-inner);
         height: 100%;
         padding: 10px;
         overflow-y: auto;
@@ -455,6 +463,26 @@
         margin: 8px 0 4px;
       }
 
+      .thinking-stage {
+        border: 1px solid var(--thinking-content-border);
+        border-radius: 10px;
+        padding: 8px;
+        margin-top: 8px;
+        background: rgba(255, 255, 255, 0.02);
+      }
+
+      .thinking-stage-title {
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text-main);
+      }
+
+      .thinking-stage-title .thinking-stage-meta {
+        color: var(--text-muted);
+        margin-left: 6px;
+      }
+
       .thinking-content {
         margin: 0;
         white-space: pre-wrap;
@@ -463,11 +491,23 @@
         font-size: 11px;
         line-height: 1.35;
         color: var(--text-main);
-        background: rgba(255, 255, 255, 0.03);
-        border: 1px solid var(--form-border);
+        background: var(--thinking-content-bg);
+        border: 1px solid var(--thinking-content-border);
         border-radius: 8px;
         padding: 8px;
         min-height: 56px;
+      }
+
+      .trace-links {
+        display: block;
+      }
+
+      .trace-links .source-card {
+        margin-top: 0;
+      }
+
+      .trace-links .source-pill {
+        margin: 6px 6px 0 0;
       }
 
       .msg {
@@ -476,8 +516,70 @@
         border-radius: 14px;
         padding: 11px 12px;
         line-height: 1.45;
-        white-space: pre-wrap;
+        white-space: normal;
         border: 1px solid var(--msg-border);
+      }
+
+      .msg-body strong {
+        font-weight: 700;
+      }
+
+      .msg-body .inline-code {
+        font-family: "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+        font-size: 0.92em;
+        border: 1px solid var(--thinking-content-border);
+        background: var(--thinking-content-bg);
+        border-radius: 6px;
+        padding: 1px 5px;
+      }
+
+      .msg-body .md-code-block {
+        margin: 8px 0 0;
+        border: 1px solid var(--thinking-content-border);
+        background: var(--thinking-content-bg);
+        border-radius: 8px;
+        padding: 8px 10px;
+        overflow-x: auto;
+      }
+
+      .msg-body .md-code-block code {
+        font-family: "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+        font-size: 12px;
+        line-height: 1.45;
+        white-space: pre;
+      }
+
+      .msg-body .md-code-lang {
+        margin-top: 8px;
+        margin-bottom: -2px;
+        font-size: 10px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text-muted);
+      }
+
+      .msg-body .md-paragraph {
+        margin: 0 0 8px;
+        white-space: pre-wrap;
+      }
+
+      .msg-body .md-paragraph:last-child {
+        margin-bottom: 0;
+      }
+
+      .msg-body .md-list,
+      .msg-body .md-olist {
+        margin: 6px 0 8px 18px;
+        padding-left: 14px;
+      }
+
+      .msg-body .md-list li,
+      .msg-body .md-olist li {
+        margin: 3px 0;
+      }
+
+      .msg-body .md-spacer {
+        height: 7px;
       }
 
       .msg.user {
@@ -1104,6 +1206,7 @@
         }
 
         body.thinking-mode .chat-shell {
+          --thinking-reserve: 0px;
           width: min(980px, 100%);
           margin-right: auto;
           margin-left: auto;
@@ -1214,10 +1317,27 @@
           <span>LLM Trace</span>
           <button id="thinking-close" class="thinking-close" type="button">Close</button>
         </div>
-        <div class="thinking-subhead">Prompt</div>
-        <pre id="prompt-view" class="thinking-content">Thinking mode is off.</pre>
-        <div class="thinking-subhead">Model Thinking</div>
-        <pre id="thinking-view" class="thinking-content">No model thinking captured yet.</pre>
+        <div class="thinking-stage">
+          <div class="thinking-stage-title">Router</div>
+          <div class="thinking-subhead">Thinking</div>
+          <pre id="router-thinking-view" class="thinking-content">Thinking mode is off.</pre>
+          <div class="thinking-subhead">Response</div>
+          <pre id="router-response-view" class="thinking-content">No router response captured yet.</pre>
+          <div class="thinking-subhead">Sources</div>
+          <div id="router-sources-view" class="sources trace-links">No router sources captured yet.</div>
+        </div>
+        <div class="thinking-stage">
+          <div class="thinking-stage-title">Main Model</div>
+          <div class="thinking-subhead">Sources</div>
+          <div id="reader-sources-view" class="sources trace-links">No main-model sources captured yet.</div>
+          <div class="thinking-subhead">Response</div>
+          <pre id="reader-response-view" class="thinking-content">No main-model response captured yet.</pre>
+        </div>
+        <div class="thinking-stage">
+          <div class="thinking-stage-title">Checker</div>
+          <div class="thinking-subhead">Verification</div>
+          <pre id="checker-view" class="thinking-content">No checker output captured yet.</pre>
+        </div>
       </div>
     </aside>
 
@@ -1231,8 +1351,12 @@
       const thinkingToggleEl = document.getElementById("thinking-toggle");
       const thinkingToggleLabelEl = document.getElementById("thinking-toggle-label");
       const thinkingCloseEl = document.getElementById("thinking-close");
-      const promptViewEl = document.getElementById("prompt-view");
-      const thinkingViewEl = document.getElementById("thinking-view");
+      const routerThinkingViewEl = document.getElementById("router-thinking-view");
+      const routerResponseViewEl = document.getElementById("router-response-view");
+      const routerSourcesViewEl = document.getElementById("router-sources-view");
+      const readerSourcesViewEl = document.getElementById("reader-sources-view");
+      const readerResponseViewEl = document.getElementById("reader-response-view");
+      const checkerViewEl = document.getElementById("checker-view");
       const statusEl = document.getElementById("status-text");
       const themeToggleEl = document.getElementById("theme-toggle");
       const themeToggleLabelEl = document.getElementById("theme-toggle-label");
@@ -1243,6 +1367,12 @@
       const VALID_CONTEXT_MODES = new Set(["retrieval", "section_map", "full"]);
       const prefersReducedMotion =
         typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const TRACE_PREVIEW_LIMITS = Object.freeze({
+        short: 170,
+        medium: 340,
+        long: 640,
+        response: 2200
+      });
       let themeFadeTimeout = null;
 
       function createSessionId() {
@@ -1310,8 +1440,12 @@
         document.body.classList.toggle("thinking-mode", enabled);
         syncThinkingToggle(enabled);
         if (!enabled) {
-          promptViewEl.textContent = "Thinking mode is off.";
-          thinkingViewEl.textContent = "No model thinking captured yet.";
+          routerThinkingViewEl.textContent = "Thinking mode is off.";
+          routerResponseViewEl.textContent = "No router response captured yet.";
+          routerSourcesViewEl.textContent = "No router sources captured yet.";
+          readerSourcesViewEl.textContent = "No main-model sources captured yet.";
+          readerResponseViewEl.textContent = "No main-model response captured yet.";
+          checkerViewEl.textContent = "No checker output captured yet.";
         }
       }
 
@@ -1416,23 +1550,243 @@
         }
       });
 
-      function renderLlmTrace(trace) {
-        if (!trace || typeof trace !== "object") {
-          promptViewEl.textContent = "No LLM prompt trace was returned for this turn.";
-          thinkingViewEl.textContent = "Model did not expose internal thinking for this turn.";
+      function clearNode(node) {
+        while (node.firstChild) {
+          node.removeChild(node.firstChild);
+        }
+      }
+
+      function normalizeTraceText(value) {
+        return String(value || "").replace(/\s+/g, " ").trim();
+      }
+
+      function clipTracePreview(value, maxChars) {
+        const text = normalizeTraceText(value);
+        if (!text) {
+          return "";
+        }
+        if (text.length <= maxChars) {
+          return text;
+        }
+        if (maxChars <= 3) {
+          return text.slice(0, maxChars);
+        }
+        return text.slice(0, maxChars - 3).trimEnd() + "...";
+      }
+
+      function traceLine(label, value, maxChars = TRACE_PREVIEW_LIMITS.medium) {
+        const clipped = clipTracePreview(value, maxChars);
+        if (!clipped) {
+          return "";
+        }
+        return `${label}: ${clipped}`;
+      }
+
+      function formatTraceLines(lines, fallbackText) {
+        const cleaned = lines
+          .map((line) => String(line || "").trim())
+          .filter((line) => line.length > 0);
+        if (cleaned.length === 0) {
+          return fallbackText;
+        }
+        return cleaned.join("\n");
+      }
+
+      function normalizeTraceLinks(items) {
+        if (!Array.isArray(items)) {
+          return [];
+        }
+        const links = [];
+        const seenUrls = new Set();
+        items.forEach((item, idx) => {
+          if (!item || typeof item !== "object") {
+            return;
+          }
+          const url = typeof item.url === "string" ? item.url.trim() : "";
+          if (!url || seenUrls.has(url)) {
+            return;
+          }
+          seenUrls.add(url);
+          links.push({
+            source: item.source || idx + 1,
+            title: item.title || item.section || "Source",
+            url
+          });
+        });
+        return links;
+      }
+
+      function renderTraceSourceList(container, links, emptyText, maxItems = 12) {
+        clearNode(container);
+        const normalized = normalizeTraceLinks(links);
+        if (normalized.length === 0) {
+          container.textContent = emptyText;
           return;
         }
-        promptViewEl.textContent = trace.prompt || "Prompt unavailable.";
-        thinkingViewEl.textContent =
-          trace.thinking ||
-          trace.raw_response ||
-          "Model did not expose internal thinking for this turn.";
+        const cappedItems =
+          Number.isFinite(maxItems) && maxItems > 0
+            ? normalized.slice(0, maxItems)
+            : normalized;
+        const card = document.createElement("div");
+        card.className = "source-card";
+        cappedItems.forEach((item, idx) => {
+          const a = document.createElement("a");
+          a.className = "source-pill";
+          a.href = item.url;
+          a.target = "_blank";
+          a.rel = "noopener noreferrer";
+          const rank = item.source ? `S${item.source}` : `S${idx + 1}`;
+          a.textContent = `${rank} ${item.title || "Source"}`;
+          card.appendChild(a);
+        });
+        container.appendChild(card);
+      }
+
+      function collectRouterSources(trace) {
+        if (!trace || typeof trace !== "object") {
+          return [];
+        }
+        if (Array.isArray(trace.router_to_reader_links) && trace.router_to_reader_links.length > 0) {
+          return trace.router_to_reader_links;
+        }
+        if (Array.isArray(trace.router_selected_sources) && trace.router_selected_sources.length > 0) {
+          return trace.router_selected_sources.map((item, idx) => ({
+            source: item.source || idx + 1,
+            title: item.title || item.section || "Source",
+            section: item.section || "",
+            url: item.url || ""
+          }));
+        }
+        if (Array.isArray(trace.router_candidate_links) && trace.router_candidate_links.length > 0) {
+          return trace.router_candidate_links;
+        }
+        return [];
+      }
+
+      function collectReaderSources(trace) {
+        if (!trace || typeof trace !== "object") {
+          return [];
+        }
+        if (Array.isArray(trace.reader_links) && trace.reader_links.length > 0) {
+          return trace.reader_links;
+        }
+        return [];
+      }
+
+      function renderLlmTrace(trace) {
+        if (!trace || typeof trace !== "object") {
+          routerThinkingViewEl.textContent = "No LLM trace was returned for this turn.";
+          routerResponseViewEl.textContent = "Router response unavailable for this turn.";
+          routerSourcesViewEl.textContent = "No router sources captured for this turn.";
+          readerSourcesViewEl.textContent = "No main-model sources captured for this turn.";
+          readerResponseViewEl.textContent = "Main-model response unavailable for this turn.";
+          checkerViewEl.textContent = "Checker did not run for this turn.";
+          return;
+        }
+
+        const routerThinkingLines = [];
+        const routerThinking = clipTracePreview(trace.router_thinking || trace.router_rationale, TRACE_PREVIEW_LIMITS.response);
+        if (routerThinking) {
+          routerThinkingLines.push(routerThinking);
+        }
+        if (trace.context_mode) {
+          const modeLine = trace.premium_mode ? `${trace.context_mode} (premium)` : trace.context_mode;
+          routerThinkingLines.push(`Context mode: ${modeLine}`);
+        }
+        if (trace.query_used_for_retrieval) {
+          routerThinkingLines.push(
+            traceLine("Retrieval query", trace.query_used_for_retrieval, TRACE_PREVIEW_LIMITS.medium)
+          );
+        }
+        routerThinkingViewEl.textContent = formatTraceLines(
+          routerThinkingLines,
+          "Router thinking unavailable in this mode."
+        );
+
+        const routerResponseLines = [];
+        const routerResponse = clipTracePreview(trace.router_raw_response, TRACE_PREVIEW_LIMITS.long);
+        if (routerResponse) {
+          routerResponseLines.push(routerResponse);
+        }
+        if (trace.router_prompt_preview) {
+          routerResponseLines.push(traceLine("Prompt cue", trace.router_prompt_preview, TRACE_PREVIEW_LIMITS.short));
+        }
+        routerResponseViewEl.textContent = formatTraceLines(
+          routerResponseLines,
+          "Router response unavailable in this mode."
+        );
+        renderTraceSourceList(
+          routerSourcesViewEl,
+          collectRouterSources(trace),
+          "No router sources captured for this turn."
+        );
+
+        const readerResponseLines = [];
+        if (trace.final_answer_mode) {
+          readerResponseLines.push(`Answer mode: ${trace.final_answer_mode}`);
+        }
+        const finalAnswer = clipTracePreview(
+          trace.final_answer || trace.raw_response,
+          TRACE_PREVIEW_LIMITS.response
+        );
+        if (finalAnswer) {
+          readerResponseLines.push(traceLine("Response", finalAnswer, TRACE_PREVIEW_LIMITS.response));
+        }
+        if (trace.thinking) {
+          readerResponseLines.push(traceLine("Thinking", trace.thinking, TRACE_PREVIEW_LIMITS.long));
+        }
+        readerResponseViewEl.textContent = formatTraceLines(
+          readerResponseLines,
+          "Main-model response unavailable for this turn."
+        );
+        renderTraceSourceList(
+          readerSourcesViewEl,
+          collectReaderSources(trace),
+          "No main-model sources captured for this turn.",
+          Number.POSITIVE_INFINITY
+        );
+
+        const checkerLines = [];
+        if (trace.checker_decision) {
+          checkerLines.push(`Request guard: ${trace.checker_decision}`);
+        }
+        if (trace.checker_reason) {
+          checkerLines.push(traceLine("Request reason", trace.checker_reason, TRACE_PREVIEW_LIMITS.long));
+        }
+        if (Object.prototype.hasOwnProperty.call(trace, "checker_response_contains_code")) {
+          checkerLines.push(
+            `Response contains code: ${trace.checker_response_contains_code ? "yes" : "no"}`
+          );
+        }
+        if (trace.checker_response_reason) {
+          checkerLines.push(
+            traceLine("Response scan", trace.checker_response_reason, TRACE_PREVIEW_LIMITS.long)
+          );
+        }
+        if (Array.isArray(trace.checker_response_markers) && trace.checker_response_markers.length > 0) {
+          checkerLines.push(`Detected markers: ${trace.checker_response_markers.join(", ")}`);
+        }
+        if (trace.checker_error) {
+          checkerLines.push(traceLine("Checker error", trace.checker_error, TRACE_PREVIEW_LIMITS.medium));
+        }
+        checkerViewEl.textContent = formatTraceLines(checkerLines, "Checker did not run for this turn.");
       }
 
       function renderPendingLlmTrace(message, contextMode) {
         const timestamp = new Date().toLocaleTimeString();
-        promptViewEl.textContent = `Preparing request at ${timestamp}...\n\nQuestion:\n${message}\n\nContext mode: ${contextMode}`;
-        thinkingViewEl.textContent = "Waiting for model response...";
+        routerThinkingViewEl.textContent = formatTraceLines(
+          [
+            `Preparing request at ${timestamp}.`,
+            traceLine("Question", message, TRACE_PREVIEW_LIMITS.medium),
+            `Context mode: ${contextMode}`
+          ],
+          "Preparing request..."
+        );
+        routerResponseViewEl.textContent = "Waiting for router response...";
+        routerSourcesViewEl.textContent = "Waiting for router sources...";
+        readerSourcesViewEl.textContent = "Waiting for main-model sources...";
+        readerResponseViewEl.textContent = "Waiting for main-model response...";
+        checkerViewEl.textContent = "Waiting for checker output...";
       }
 
       function setThinking(value) {
@@ -1443,12 +1797,173 @@
         }
       }
 
+      function appendInlineMarkdown(container, text) {
+        let i = 0;
+        let plain = "";
+        const flushPlain = () => {
+          if (plain) {
+            container.appendChild(document.createTextNode(plain));
+            plain = "";
+          }
+        };
+
+        while (i < text.length) {
+          if (text.startsWith("**", i)) {
+            const end = text.indexOf("**", i + 2);
+            if (end !== -1) {
+              flushPlain();
+              const strong = document.createElement("strong");
+              strong.textContent = text.slice(i + 2, end);
+              container.appendChild(strong);
+              i = end + 2;
+              continue;
+            }
+          }
+
+          if (text.startsWith("'''", i)) {
+            const end = text.indexOf("'''", i + 3);
+            if (end !== -1) {
+              flushPlain();
+              const code = document.createElement("code");
+              code.className = "inline-code";
+              code.textContent = text.slice(i + 3, end);
+              container.appendChild(code);
+              i = end + 3;
+              continue;
+            }
+          }
+
+          if (text[i] === "`") {
+            const end = text.indexOf("`", i + 1);
+            if (end !== -1) {
+              flushPlain();
+              const code = document.createElement("code");
+              code.className = "inline-code";
+              code.textContent = text.slice(i + 1, end);
+              container.appendChild(code);
+              i = end + 1;
+              continue;
+            }
+          }
+
+          plain += text[i];
+          i += 1;
+        }
+        flushPlain();
+      }
+
+      function renderMarkdownTextSegment(container, rawText) {
+        const lines = String(rawText || "").replace(/\r\n/g, "\n").split("\n");
+        let activeList = null;
+        let hasBlock = false;
+        let lastWasSpacer = false;
+
+        const closeList = () => {
+          activeList = null;
+        };
+
+        lines.forEach((line) => {
+          const trimmed = line.trim();
+          if (!trimmed) {
+            closeList();
+            if (hasBlock && !lastWasSpacer) {
+              const spacer = document.createElement("div");
+              spacer.className = "md-spacer";
+              container.appendChild(spacer);
+              lastWasSpacer = true;
+            }
+            return;
+          }
+
+          const bulletMatch = line.match(/^\s*[*-]\s+(.+)$/);
+          const orderedMatch = line.match(/^\s*(\d+)[.)]\s+(.+)$/);
+          if (bulletMatch || orderedMatch) {
+            const listType = bulletMatch ? "ul" : "ol";
+            const content = bulletMatch ? bulletMatch[1] : orderedMatch[2];
+            if (!activeList || activeList.tagName.toLowerCase() !== listType) {
+              closeList();
+              activeList = document.createElement(listType);
+              activeList.className = listType === "ul" ? "md-list" : "md-olist";
+              container.appendChild(activeList);
+            }
+            const li = document.createElement("li");
+            appendInlineMarkdown(li, content);
+            activeList.appendChild(li);
+            hasBlock = true;
+            lastWasSpacer = false;
+            return;
+          }
+
+          closeList();
+          const paragraph = document.createElement("div");
+          paragraph.className = "md-paragraph";
+          appendInlineMarkdown(paragraph, line);
+          container.appendChild(paragraph);
+          hasBlock = true;
+          lastWasSpacer = false;
+        });
+      }
+
+      function parseFenceHeader(line) {
+        return line.match(/^\s*(```|''')\s*([A-Za-z0-9_.+-]*)\s*$/);
+      }
+
+      function renderMarkdownLite(container, rawText) {
+        const lines = String(rawText || "").replace(/\r\n/g, "\n").split("\n");
+        let i = 0;
+
+        while (i < lines.length) {
+          const header = parseFenceHeader(lines[i]);
+          if (!header) {
+            const textLines = [];
+            while (i < lines.length && !parseFenceHeader(lines[i])) {
+              textLines.push(lines[i]);
+              i += 1;
+            }
+            renderMarkdownTextSegment(container, textLines.join("\n"));
+            continue;
+          }
+
+          const fence = header[1];
+          const lang = (header[2] || "").trim();
+          i += 1;
+
+          const codeLines = [];
+          while (i < lines.length && !new RegExp("^\\s*" + fence.replace(/'/g, "\\'") + "\\s*$").test(lines[i])) {
+            codeLines.push(lines[i]);
+            i += 1;
+          }
+          if (i < lines.length) {
+            i += 1;
+          }
+
+          if (lang) {
+            const langLabel = document.createElement("div");
+            langLabel.className = "md-code-lang";
+            langLabel.textContent = lang;
+            container.appendChild(langLabel);
+          }
+
+          const pre = document.createElement("pre");
+          pre.className = "md-code-block";
+          const code = document.createElement("code");
+          code.textContent = codeLines.join("\n").replace(/\s+$/, "");
+          pre.appendChild(code);
+          container.appendChild(pre);
+        }
+      }
+
       function addMessage(text, role, sources, mode, confidence) {
         const msg = document.createElement("article");
         msg.className = "msg " + role;
 
         const body = document.createElement("div");
-        body.textContent = text;
+        body.className = "msg-body";
+        if (role === "assistant") {
+          renderMarkdownLite(body, text);
+        } else {
+          body.textContent = text;
+        }
         msg.appendChild(body);
 
         if (role === "assistant") {

@@ -112,6 +112,7 @@ Optional request fields for LLM context:
 
 - `context_mode`: one of `retrieval`, `full`, `section_map`
 - `premium_mode`: boolean shortcut (`true` forces `full`, `false` forces `retrieval`)
+- Premium behavior (`context_mode=full` or `section_map`): LLM-first answering with polished prose output and no deterministic candidate-answer injection.
 
 Response shape:
 

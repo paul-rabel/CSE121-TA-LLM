@@ -2407,6 +2407,7 @@ def build_llm_answer(
     retriever: Optional[Retriever] = None,
     preferred_answer: Optional[str] = None,
     context_mode: str = DEFAULT_LLM_CONTEXT_MODE,
+    premium_mode: bool = False,
 ) -> Optional[str]:
     _ = selection
     if not ENABLE_LLM_RESPONSE:
@@ -2432,16 +2433,29 @@ def build_llm_answer(
         )
         return None
 
-    system_prompt = (
-        "You are a helpful CSE 121 course assistant.\n"
-        "Use only the provided source snippets.\n"
-        f"If the evidence is insufficient or ambiguous, reply exactly: {NO_ANSWER_SENTINEL}\n"
-        "If the user question is ambiguous, ask one concise clarification question and stop.\n"
-        "If sufficient, answer naturally in 2-4 sentences and cite evidence as [source N] on the course website.\n"
-        "Do not infer dates, times, names, or policy details unless explicitly present in the snippets."
-    )
+    if premium_mode:
+        system_prompt = (
+            "You are a helpful CSE 121 course assistant.\n"
+            "Use only the provided course website content.\n"
+            f"If the evidence is insufficient or ambiguous, reply exactly: {NO_ANSWER_SENTINEL}\n"
+            "If the user question is ambiguous, ask one concise clarification question and stop.\n"
+            "Write polished, student-friendly output in complete sentences.\n"
+            "Prefer one concise paragraph. If listing multiple items, use a short lead sentence then bullet points.\n"
+            "Do not include [source N] markers in the answer text.\n"
+            "Do not infer dates, times, names, or policy details unless explicitly present in the provided content."
+        )
+    else:
+        system_prompt = (
+            "You are a helpful CSE 121 course assistant.\n"
+            "Use only the provided source snippets.\n"
+            f"If the evidence is insufficient or ambiguous, reply exactly: {NO_ANSWER_SENTINEL}\n"
+            "If the user question is ambiguous, ask one concise clarification question and stop.\n"
+            "If sufficient, answer naturally in 2-4 sentences and cite evidence as [source N] on the course website.\n"
+            "Do not infer dates, times, names, or policy details unless explicitly present in the snippets."
+        )
 
     user_parts = [
+        "You will be given excerpts from the course website. Based on those excerpts, respond to the student question below.\n"
         f"Question:\n{query}\n\n"
         f"Snippets from the course website:\n{context_block}"
     ]
@@ -2476,12 +2490,12 @@ def build_llm_answer(
             return NO_ANSWER_TEXT
         if is_clarification_request(text):
             return text
-        if LLM_REQUIRE_VALID_CITATIONS:
+        if LLM_REQUIRE_VALID_CITATIONS and not premium_mode:
             if not llm_citations_are_valid(text, max(1, max_source_num)):
                 return None
         if not llm_answer_is_grounded(text, context_block):
             return None
-        if preferred_answer and preferred_answer != NO_ANSWER_TEXT:
+        if (not premium_mode) and preferred_answer and preferred_answer != NO_ANSWER_TEXT:
             if llm_answer_conflicts_with_preferred(text, preferred_answer):
                 return None
         return text
@@ -2646,7 +2660,8 @@ def build_chat_payload(
     answer_mode = fallback_mode
     answer = fallback_answer
 
-    should_attempt_llm = ALWAYS_ATTEMPT_LLM or fallback_mode == "no_answer"
+    is_premium_llm_mode = resolved_context_mode in {"full", "section_map"}
+    should_attempt_llm = ALWAYS_ATTEMPT_LLM or fallback_mode == "no_answer" or is_premium_llm_mode
     if should_attempt_llm:
         if resolved_context_mode != "retrieval":
             memory_notes.append(f"LLM context mode: {resolved_context_mode}.")
@@ -2655,15 +2670,20 @@ def build_chat_payload(
             selection,
             results,
             retriever=retriever,
-            preferred_answer=fallback_answer if fallback_mode != "no_answer" else None,
+            preferred_answer=(
+                None
+                if is_premium_llm_mode
+                else (fallback_answer if fallback_mode != "no_answer" else None)
+            ),
             context_mode=resolved_context_mode,
+            premium_mode=is_premium_llm_mode,
         )
         if llm_answer is not None:
             if llm_answer == NO_ANSWER_TEXT and fallback_mode != "no_answer":
                 answer = fallback_answer
                 answer_mode = fallback_mode
             elif is_clarification_request(llm_answer):
-                if fallback_mode != "no_answer":
+                if fallback_mode != "no_answer" and not is_premium_llm_mode:
                     answer = fallback_answer
                     answer_mode = fallback_mode
                 else:

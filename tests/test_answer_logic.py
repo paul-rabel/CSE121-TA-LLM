@@ -236,6 +236,114 @@ class AnswerLogicTests(unittest.TestCase):
         self.assertIn("Expanded section content for likely relevant paths", context_map)
         self.assertGreaterEqual(source_count_map, 2)
 
+    def test_build_llm_answer_premium_relaxes_citation_requirement(self):
+        result = answer_service.SearchResult(
+            doc_id=0,
+            text="Quiz 2 is on Thu 03/05 in your section.",
+            url="https://courses.cs.washington.edu/courses/cse121/26wi/",
+            title="CSE 121",
+            chunk_index=0,
+            distance=0.2,
+            score=7.5,
+            section="Calendar",
+        )
+        selection = answer_service.EvidenceSelection(lines=[], top_score=8.0, confident=True)
+
+        original_model_resolver = answer_service.preferred_ollama_model
+        original_generate = answer_service.request_ollama_generate
+        original_citation_flag = answer_service.LLM_REQUIRE_VALID_CITATIONS
+        captured_prompts = []
+
+        answer_service.preferred_ollama_model = lambda: "mock-model"
+        answer_service.request_ollama_generate = lambda _model, _prompt: (
+            captured_prompts.append(_prompt) or {"response": "Quiz 2 is on Thu 03/05."}
+        )
+        answer_service.LLM_REQUIRE_VALID_CITATIONS = True
+        try:
+            strict_answer = answer_service.build_llm_answer(
+                "When is Quiz 2?",
+                selection,
+                [result],
+                retriever=None,
+                preferred_answer=None,
+                context_mode="retrieval",
+                premium_mode=False,
+            )
+            premium_answer = answer_service.build_llm_answer(
+                "When is Quiz 2?",
+                selection,
+                [result],
+                retriever=None,
+                preferred_answer=None,
+                context_mode="full",
+                premium_mode=True,
+            )
+        finally:
+            answer_service.preferred_ollama_model = original_model_resolver
+            answer_service.request_ollama_generate = original_generate
+            answer_service.LLM_REQUIRE_VALID_CITATIONS = original_citation_flag
+
+        self.assertIsNone(strict_answer)
+        self.assertEqual(premium_answer, "Quiz 2 is on Thu 03/05.")
+        self.assertGreaterEqual(len(captured_prompts), 2)
+        premium_prompt = captured_prompts[-1]
+        self.assertIn("Question:\nWhen is Quiz 2?", premium_prompt)
+        self.assertIn("Snippets from the course website:", premium_prompt)
+        self.assertIn("Quiz 2 is on Thu 03/05 in your section.", premium_prompt)
+
+    def test_premium_mode_skips_preferred_answer_and_keeps_clarification(self):
+        class FakeRetriever:
+            def __init__(self):
+                self.metadata = []
+
+            def search(self, _query, _top_k):
+                return [
+                    answer_service.SearchResult(
+                        doc_id=0,
+                        text="C3 - Linked Lists i.s. due by 11:59 pm PT.",
+                        url="https://courses.cs.washington.edu/courses/cse121/26wi/assignments/",
+                        title="Assignments",
+                        chunk_index=0,
+                        distance=0.1,
+                        score=10.0,
+                        section="Assignments",
+                    )
+                ]
+
+        captured = {}
+        original_llm = answer_service.build_llm_answer
+
+        def fake_llm(
+            _query,
+            _selection,
+            _results,
+            retriever=None,
+            preferred_answer=None,
+            context_mode="retrieval",
+            premium_mode=False,
+        ):
+            _ = retriever
+            captured["preferred_answer"] = preferred_answer
+            captured["context_mode"] = context_mode
+            captured["premium_mode"] = premium_mode
+            return "Could you clarify whether you mean initial submission or resubmission?"
+
+        answer_service.build_llm_answer = fake_llm
+        try:
+            payload = answer_service.build_chat_payload(
+                message="When is C3 due?",
+                retriever=FakeRetriever(),
+                llm_context_mode="full",
+            )
+        finally:
+            answer_service.build_llm_answer = original_llm
+
+        self.assertEqual(captured["context_mode"], "full")
+        self.assertTrue(captured["premium_mode"])
+        self.assertIsNone(captured["preferred_answer"])
+        self.assertEqual(payload.get("answer_mode"), "clarification")
+        self.assertTrue(payload.get("needs_clarification"))
+
     def test_llm_grounding_and_preferred_conflict_guards(self):
         context = (
             "[source 1] CSE 121 - https://courses.cs.washington.edu/courses/cse121/26wi/\n"

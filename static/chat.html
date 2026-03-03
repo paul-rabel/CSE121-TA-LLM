@@ -361,9 +361,21 @@
         text-shadow: 0 0 18px var(--status-shadow);
       }
 
-      .console {
+      .chat-shell {
         width: min(980px, 100%);
         margin: 0 auto;
+        transition:
+          width 320ms var(--theme-ease),
+          margin-right 320ms var(--theme-ease);
+      }
+
+      body.thinking-mode .chat-shell {
+        width: min(980px, calc(100% - clamp(340px, 46vw, 600px)));
+        margin-right: clamp(332px, 45vw, 584px);
+        margin-left: auto;
+      }
+
+      .console {
         background: var(--panel);
         border: 1px solid var(--panel-border);
         border-radius: 18px;
@@ -377,6 +389,85 @@
         overflow-y: auto;
         padding: 14px;
         scrollbar-color: rgba(149, 177, 255, 0.42) transparent;
+      }
+
+      .thinking-panel {
+        position: fixed;
+        top: 74px;
+        right: clamp(8px, 1.6vw, 16px);
+        bottom: 14px;
+        width: min(44vw, 560px);
+        min-width: 320px;
+        z-index: 45;
+        border: 1px solid var(--panel-border);
+        border-radius: 18px;
+        box-shadow: var(--console-shadow);
+        backdrop-filter: blur(12px);
+        background: var(--panel);
+        overflow: hidden;
+        transform: translateX(102%);
+        opacity: 0;
+        pointer-events: none;
+        transition:
+          transform 320ms var(--theme-ease),
+          opacity 280ms var(--theme-ease);
+      }
+
+      .thinking-panel-inner {
+        background: rgba(6, 10, 22, 0.5);
+        height: 100%;
+        padding: 10px;
+        overflow-y: auto;
+      }
+
+      body.thinking-mode .thinking-panel {
+        transform: translateX(0);
+        opacity: 1;
+        pointer-events: auto;
+      }
+
+      .thinking-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text-muted);
+        margin-bottom: 8px;
+      }
+
+      .thinking-close {
+        border: 1px solid var(--input-border);
+        border-radius: 8px;
+        background: var(--input-bg);
+        color: var(--text-main);
+        font-size: 11px;
+        padding: 4px 8px;
+        cursor: pointer;
+      }
+
+      .thinking-subhead {
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text-muted);
+        margin: 8px 0 4px;
+      }
+
+      .thinking-content {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-family: "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+        font-size: 11px;
+        line-height: 1.35;
+        color: var(--text-main);
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid var(--form-border);
+        border-radius: 8px;
+        padding: 8px;
+        min-height: 56px;
       }
 
       .msg {
@@ -462,7 +553,96 @@
 
       .form-actions {
         display: inline-flex;
+        align-items: center;
+        justify-content: flex-end;
+        flex-wrap: wrap;
         gap: 8px;
+      }
+
+      .thinking-toggle-floating {
+        position: fixed;
+        z-index: 30;
+        top: 14px;
+        right: clamp(114px, 10.5vw, 162px);
+        display: inline-flex;
+        align-items: center;
+        gap: 9px;
+        min-width: 94px;
+        border: 1px solid var(--toggle-border);
+        border-radius: 999px;
+        background: var(--toggle-bg);
+        color: var(--toggle-text);
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        line-height: 1;
+        padding: 6px 10px 6px 7px;
+        cursor: pointer;
+        box-shadow: var(--toggle-shadow);
+        backdrop-filter: blur(8px);
+        transform: translateY(0);
+      }
+
+      .thinking-toggle-floating:hover {
+        transform: translateY(-1px);
+      }
+
+      .thinking-toggle-floating:active {
+        transform: translateY(0) scale(0.98);
+      }
+
+      .thinking-toggle-icon {
+        position: relative;
+        width: 22px;
+        height: 22px;
+        flex: 0 0 22px;
+        border-radius: 50%;
+        border: 1.4px solid currentColor;
+        background: transparent;
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+      }
+
+      .thinking-toggle-icon::before {
+        content: "";
+        position: absolute;
+        inset: 5px;
+        border-radius: 50%;
+        background: currentColor;
+        opacity: 0.45;
+      }
+
+      .thinking-toggle-icon::after {
+        content: "";
+        position: absolute;
+        inset: -3px;
+        border-radius: 50%;
+        border: 1px solid currentColor;
+        opacity: 0.28;
+      }
+
+      .thinking-toggle-label {
+        position: relative;
+        z-index: 1;
+        min-width: 44px;
+        text-align: left;
+      }
+
+      .thinking-toggle-floating.active {
+        border-color: var(--input-border);
+        color: var(--text-main);
+        text-shadow: 0 0 8px var(--status-shadow);
+      }
+
+      .thinking-toggle-floating.active .thinking-toggle-icon {
+        border-color: currentColor;
+      }
+
+      .thinking-toggle-floating.active .thinking-toggle-icon::before {
+        opacity: 0.72;
+      }
+
+      .thinking-toggle-floating.active .thinking-toggle-icon::after {
+        opacity: 0.5;
       }
 
       #context-mode-select {
@@ -515,7 +695,8 @@
 
       #send-btn:disabled,
       #context-mode-select:disabled,
-      #reset-btn:disabled {
+      #reset-btn:disabled,
+      #thinking-toggle:disabled {
         opacity: 0.6;
         cursor: not-allowed;
       }
@@ -629,6 +810,31 @@
           color var(--theme-speed) var(--theme-ease);
       }
 
+      body.theme-ready .thinking-toggle-floating {
+        transition:
+          transform 220ms var(--theme-ease),
+          color var(--theme-speed) var(--theme-ease),
+          background-color var(--theme-speed) var(--theme-ease),
+          background var(--theme-speed) var(--theme-ease),
+          border-color var(--theme-speed) var(--theme-ease),
+          box-shadow var(--theme-speed) var(--theme-ease);
+      }
+
+      body.theme-ready .thinking-toggle-icon {
+        transition:
+          transform 380ms var(--theme-ease),
+          background var(--theme-speed) var(--theme-ease),
+          box-shadow var(--theme-speed) var(--theme-ease);
+      }
+
+      body.theme-ready .thinking-toggle-icon::before,
+      body.theme-ready .thinking-toggle-icon::after {
+        transition:
+          opacity var(--theme-speed) var(--theme-ease),
+          border-color var(--theme-speed) var(--theme-ease),
+          background-color var(--theme-speed) var(--theme-ease);
+      }
+
       @media (prefers-reduced-motion: reduce) {
         body.theme-ready,
         body.theme-ready::before,
@@ -643,7 +849,12 @@
         body.theme-ready .theme-toggle,
         body.theme-ready .theme-toggle-icon,
         body.theme-ready .theme-toggle-icon::after,
-        body.theme-ready .theme-toggle-label {
+        body.theme-ready .theme-toggle-label,
+        body.theme-ready .thinking-toggle-floating,
+        body.theme-ready .thinking-toggle-icon,
+        body.theme-ready .thinking-toggle-icon::before,
+        body.theme-ready .thinking-toggle-icon::after,
+        body.theme-ready .thinking-toggle-label {
           transition: none !important;
         }
 
@@ -881,6 +1092,23 @@
           height: 43vh;
         }
 
+        .thinking-panel {
+          width: 100vw;
+          min-width: 0;
+          top: 60px;
+          right: 0;
+          bottom: 0;
+          border-radius: 0;
+          border-right: 0;
+          border-left: 0;
+        }
+
+        body.thinking-mode .chat-shell {
+          width: min(980px, 100%);
+          margin-right: auto;
+          margin-left: auto;
+        }
+
         .msg {
           max-width: 93%;
           font-size: 14px;
@@ -899,6 +1127,25 @@
         #reset-btn,
         #send-btn {
           height: 42px;
+        }
+
+        .thinking-toggle-floating {
+          top: 10px;
+          right: 104px;
+          min-width: 88px;
+          font-size: 12px;
+          gap: 8px;
+          padding: 5px 9px 5px 6px;
+        }
+
+        .thinking-toggle-icon {
+          width: 20px;
+          height: 20px;
+          flex-basis: 20px;
+        }
+
+        .thinking-toggle-label {
+          min-width: 40px;
         }
 
         .theme-toggle {
@@ -927,6 +1174,10 @@
       <span class="theme-toggle-icon" aria-hidden="true"></span>
       <span class="theme-toggle-label" id="theme-toggle-label">Light</span>
     </button>
+    <button id="thinking-toggle" class="thinking-toggle-floating" type="button" aria-pressed="false" aria-label="Toggle thinking sidebar">
+      <span class="thinking-toggle-icon" aria-hidden="true"></span>
+      <span id="thinking-toggle-label" class="thinking-toggle-label">Thinking</span>
+    </button>
     <div class="stage">
       <section class="centerpiece" aria-label="TA Visualizer">
         <div class="orb-wrap" id="orb-wrap">
@@ -939,22 +1190,36 @@
         </div>
       </section>
 
-      <section class="console" aria-label="Chat Console">
-        <div id="messages"></div>
-        <form id="chat-form">
-          <input id="message-input" placeholder="Ask schedule, assignments, policy, and section questions" autocomplete="off" />
-          <div class="form-actions">
-            <select id="context-mode-select" aria-label="LLM context mode">
-              <option value="retrieval">Focused</option>
-              <option value="section_map">Section Map</option>
-              <option value="full">Premium Full</option>
-            </select>
-            <button id="reset-btn" type="button">New Session</button>
-            <button id="send-btn" type="submit">Transmit</button>
-          </div>
-        </form>
+      <section class="chat-shell" aria-label="Chat Workspace">
+        <div class="console" aria-label="Chat Console">
+          <div id="messages"></div>
+          <form id="chat-form">
+            <input id="message-input" placeholder="Ask schedule, assignments, policy, and section questions" autocomplete="off" />
+            <div class="form-actions">
+              <select id="context-mode-select" aria-label="LLM context mode">
+                <option value="retrieval">Focused</option>
+                <option value="section_map">Section Map</option>
+                <option value="full">Premium Full</option>
+              </select>
+              <button id="reset-btn" type="button">New Session</button>
+              <button id="send-btn" type="submit">Transmit</button>
+            </div>
+          </form>
+        </div>
       </section>
     </div>
+    <aside id="thinking-panel" class="thinking-panel" aria-label="LLM Trace Sidebar">
+      <div class="thinking-panel-inner">
+        <div class="thinking-head">
+          <span>LLM Trace</span>
+          <button id="thinking-close" class="thinking-close" type="button">Close</button>
+        </div>
+        <div class="thinking-subhead">Prompt</div>
+        <pre id="prompt-view" class="thinking-content">Thinking mode is off.</pre>
+        <div class="thinking-subhead">Model Thinking</div>
+        <pre id="thinking-view" class="thinking-content">No model thinking captured yet.</pre>
+      </div>
+    </aside>
 
     <script>
       const messagesEl = document.getElementById("messages");
@@ -963,12 +1228,18 @@
       const btnEl = document.getElementById("send-btn");
       const resetBtnEl = document.getElementById("reset-btn");
       const contextModeEl = document.getElementById("context-mode-select");
+      const thinkingToggleEl = document.getElementById("thinking-toggle");
+      const thinkingToggleLabelEl = document.getElementById("thinking-toggle-label");
+      const thinkingCloseEl = document.getElementById("thinking-close");
+      const promptViewEl = document.getElementById("prompt-view");
+      const thinkingViewEl = document.getElementById("thinking-view");
       const statusEl = document.getElementById("status-text");
       const themeToggleEl = document.getElementById("theme-toggle");
       const themeToggleLabelEl = document.getElementById("theme-toggle-label");
       const THEME_KEY = "tai-theme";
       const SESSION_KEY = "tai-session-id";
       const CONTEXT_MODE_KEY = "tai-context-mode";
+      const THINKING_MODE_KEY = "tai-thinking-mode";
       const VALID_CONTEXT_MODES = new Set(["retrieval", "section_map", "full"]);
       const prefersReducedMotion =
         typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -1015,6 +1286,33 @@
           // Ignore storage failures (private mode or blocked storage).
         }
         return "retrieval";
+      }
+
+      function getInitialThinkingMode() {
+        try {
+          return localStorage.getItem(THINKING_MODE_KEY) === "1";
+        } catch (err) {
+          return false;
+        }
+      }
+
+      function isThinkingModeEnabled() {
+        return document.body.classList.contains("thinking-mode");
+      }
+
+      function syncThinkingToggle(enabled) {
+        thinkingToggleEl.classList.toggle("active", enabled);
+        thinkingToggleEl.setAttribute("aria-pressed", enabled ? "true" : "false");
+        thinkingToggleLabelEl.textContent = "Thinking";
+      }
+
+      function applyThinkingMode(enabled) {
+        document.body.classList.toggle("thinking-mode", enabled);
+        syncThinkingToggle(enabled);
+        if (!enabled) {
+          promptViewEl.textContent = "Thinking mode is off.";
+          thinkingViewEl.textContent = "No model thinking captured yet.";
+        }
       }
 
       function getInitialTheme() {
@@ -1088,6 +1386,54 @@
           // Ignore storage failures (private mode or blocked storage).
         }
       });
+
+      applyThinkingMode(getInitialThinkingMode());
+      thinkingToggleEl.addEventListener("click", () => {
+        const enabled = !isThinkingModeEnabled();
+        applyThinkingMode(enabled);
+        try {
+          localStorage.setItem(THINKING_MODE_KEY, enabled ? "1" : "0");
+        } catch (err) {
+          // Ignore storage failures (private mode or blocked storage).
+        }
+      });
+
+      function closeThinkingPanel() {
+        applyThinkingMode(false);
+        try {
+          localStorage.setItem(THINKING_MODE_KEY, "0");
+        } catch (err) {
+          // Ignore storage failures (private mode or blocked storage).
+        }
+      }
+
+      thinkingCloseEl.addEventListener("click", () => {
+        closeThinkingPanel();
+      });
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && isThinkingModeEnabled()) {
+          closeThinkingPanel();
+        }
+      });
+
+      function renderLlmTrace(trace) {
+        if (!trace || typeof trace !== "object") {
+          promptViewEl.textContent = "No LLM prompt trace was returned for this turn.";
+          thinkingViewEl.textContent = "Model did not expose internal thinking for this turn.";
+          return;
+        }
+        promptViewEl.textContent = trace.prompt || "Prompt unavailable.";
+        thinkingViewEl.textContent =
+          trace.thinking ||
+          trace.raw_response ||
+          "Model did not expose internal thinking for this turn.";
+      }
+
+      function renderPendingLlmTrace(message, contextMode) {
+        const timestamp = new Date().toLocaleTimeString();
+        promptViewEl.textContent = `Preparing request at ${timestamp}...\n\nQuestion:\n${message}\n\nContext mode: ${contextMode}`;
+        thinkingViewEl.textContent = "Waiting for model response...";
+      }
 
       function setThinking(value) {
         if (value) {
@@ -1177,20 +1523,36 @@
         btnEl.disabled = true;
         resetBtnEl.disabled = true;
         contextModeEl.disabled = true;
+        thinkingToggleEl.disabled = true;
         setThinking(true);
         const contextMode = VALID_CONTEXT_MODES.has(contextModeEl.value) ? contextModeEl.value : "retrieval";
+        const thinkingMode = isThinkingModeEnabled();
+        if (thinkingMode) {
+          renderPendingLlmTrace(message, contextMode);
+        }
 
         try {
           const res = await fetch("/api/chat", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ message, session_id: sessionId, context_mode: contextMode })
+            body: JSON.stringify({
+              message,
+              session_id: sessionId,
+              context_mode: contextMode,
+              thinking_mode: thinkingMode
+            })
           });
 
           const data = await res.json();
           if (!res.ok) {
             addMessage(data.error || "Request failed", "assistant", [], "error");
             statusEl.textContent = "Request failed";
+            if (thinkingMode) {
+              renderLlmTrace({
+                prompt: "Request failed before a valid LLM trace could be returned.",
+                thinking: data.error || "No additional server detail available."
+              });
+            }
             return;
           }
 
@@ -1201,14 +1563,24 @@
             data.answer_mode || "unknown",
             typeof data.confidence === "number" ? data.confidence : null
           );
+          if (thinkingMode) {
+            renderLlmTrace(data.llm_trace || null);
+          }
           statusEl.textContent = data.answer_mode === "no_answer" ? "No answer found" : "Answer ready";
         } catch (err) {
           addMessage("Server connection failed.", "assistant", [], "error");
           statusEl.textContent = "Offline";
+          if (thinkingMode) {
+            renderLlmTrace({
+              prompt: "Network/server error while requesting LLM output.",
+              thinking: "Connection failed before response."
+            });
+          }
         } finally {
           btnEl.disabled = false;
           resetBtnEl.disabled = false;
           contextModeEl.disabled = false;
+          thinkingToggleEl.disabled = false;
           setThinking(false);
         }
       }

@@ -102,6 +102,15 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertEqual(body.get("error"), "premium_mode must be a boolean")
 
+    def test_chat_rejects_non_boolean_thinking_mode(self):
+        status, body = self._request(
+            "POST",
+            "/api/chat",
+            payload={"message": "When is C3 due?", "thinking_mode": "yes"},
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(body.get("error"), "thinking_mode must be a boolean")
+
     def test_chat_returns_deterministic_answer_with_sources(self):
         status, body = self._request(
             "POST",

@@ -291,6 +291,49 @@ class AnswerLogicTests(unittest.TestCase):
         self.assertIn("Snippets from the course website:", premium_prompt)
         self.assertIn("Quiz 2 is on Thu 03/05 in your section.", premium_prompt)
 
+    def test_build_llm_answer_extracts_inline_thinking_tags(self):
+        result = answer_service.SearchResult(
+            doc_id=0,
+            text="Quiz 2 is on Thu 03/05 in your section.",
+            url="https://courses.cs.washington.edu/courses/cse121/26wi/",
+            title="CSE 121",
+            chunk_index=0,
+            distance=0.2,
+            score=7.5,
+            section="Calendar",
+        )
+        selection = answer_service.EvidenceSelection(lines=[], top_score=8.0, confident=True)
+        trace = {}
+
+        original_model_resolver = answer_service.preferred_ollama_model
+        original_generate = answer_service.request_ollama_generate
+        original_citation_flag = answer_service.LLM_REQUIRE_VALID_CITATIONS
+
+        answer_service.preferred_ollama_model = lambda: "mock-model"
+        answer_service.request_ollama_generate = lambda _model, _prompt: {
+            "response": "<think>Need the date from source.</think>Quiz 2 is on Thu 03/05. [source 1]"
+        }
+        answer_service.LLM_REQUIRE_VALID_CITATIONS = True
+        try:
+            answer = answer_service.build_llm_answer(
+                "When is Quiz 2?",
+                selection,
+                [result],
+                retriever=None,
+                preferred_answer=None,
+                context_mode="retrieval",
+                premium_mode=False,
+                llm_trace=trace,
+            )
+        finally:
+            answer_service.preferred_ollama_model = original_model_resolver
+            answer_service.request_ollama_generate = original_generate
+            answer_service.LLM_REQUIRE_VALID_CITATIONS = original_citation_flag
+
+        self.assertEqual(answer, "Quiz 2 is on Thu 03/05. [source 1]")
+        self.assertIn("thinking", trace)
+        self.assertIn("Need the date from source.", trace.get("thinking", ""))
+
     def test_premium_mode_skips_preferred_answer_and_keeps_clarification(self):
         class FakeRetriever:
             def __init__(self):
@@ -321,11 +364,15 @@ class AnswerLogicTests(unittest.TestCase):
             preferred_answer=None,
             context_mode="retrieval",
             premium_mode=False,
+            llm_trace=None,
         ):
             _ = retriever
             captured["preferred_answer"] = preferred_answer
             captured["context_mode"] = context_mode
             captured["premium_mode"] = premium_mode
+            if llm_trace is not None:
+                llm_trace["prompt"] = "mock prompt"
+                llm_trace["thinking"] = "mock thinking"
             return "Could you clarify whether you mean initial submission or resubmission?"
 
         answer_service.build_llm_answer = fake_llm
@@ -343,6 +390,103 @@ class AnswerLogicTests(unittest.TestCase):
         self.assertIsNone(captured["preferred_answer"])
         self.assertEqual(payload.get("answer_mode"), "clarification")
         self.assertTrue(payload.get("needs_clarification"))
+
+    def test_build_chat_payload_includes_llm_trace_when_enabled(self):
+        class FakeRetriever:
+            def search(self, _query, _top_k):
+                return [
+                    answer_service.SearchResult(
+                        doc_id=0,
+                        text="Quiz 2 is on Thu 03/05 in your section.",
+                        url="https://courses.cs.washington.edu/courses/cse121/26wi/",
+                        title="CSE 121",
+                        chunk_index=0,
+                        distance=0.1,
+                        score=10.0,
+                        section="Calendar",
+                    )
+                ]
+
+        original_llm = answer_service.build_llm_answer
+
+        def fake_llm(*_args, llm_trace=None, **_kwargs):
+            if llm_trace is not None:
+                llm_trace["prompt"] = "prompt text"
+                llm_trace["thinking"] = "thinking text"
+            return "Quiz 2 is on Thu 03/05. [source 1]"
+
+        answer_service.build_llm_answer = fake_llm
+        try:
+            payload = answer_service.build_chat_payload(
+                message="When is Quiz 2?",
+                retriever=FakeRetriever(),
+                include_llm_trace=True,
+            )
+        finally:
+            answer_service.build_llm_answer = original_llm
+
+        self.assertEqual(payload.get("answer_mode"), "llm")
+        self.assertIn("llm_trace", payload)
+        self.assertEqual(payload["llm_trace"].get("prompt"), "prompt text")
+        self.assertEqual(payload["llm_trace"].get("thinking"), "thinking text")
+
+    def test_build_chat_payload_uses_router_sources_for_premium_llm_answers(self):
+        class FakeRetriever:
+            def __init__(self):
+                self.metadata = []
+
+            def search(self, _query, _top_k):
+                return [
+                    answer_service.SearchResult(
+                        doc_id=0,
+                        text="General course overview.",
+                        url="https://courses.cs.washington.edu/courses/cse121/26wi/",
+                        title="CSE 121",
+                        chunk_index=0,
+                        distance=0.4,
+                        score=4.0,
+                        section="Overview",
+                    )
+                ]
+
+        original_llm = answer_service.build_llm_answer
+
+        def fake_llm(*_args, llm_trace=None, **_kwargs):
+            if llm_trace is not None:
+                llm_trace["router_selected_sources"] = [
+                    {
+                        "source": 1,
+                        "doc_id": 12,
+                        "title": "Course Staff",
+                        "section": "Course Staff",
+                        "url": "https://courses.cs.washington.edu/courses/cse121/26wi/staff/",
+                        "chunk_index": 2,
+                        "distance": 0.05,
+                        "score": 12.3,
+                        "snippet": "Instructor: Miya Natsuhara",
+                    }
+                ]
+            return "The instructor is Miya Natsuhara."
+
+        answer_service.build_llm_answer = fake_llm
+        try:
+            payload = answer_service.build_chat_payload(
+                message="Who is the instructor?",
+                retriever=FakeRetriever(),
+                llm_context_mode="full",
+                include_source_details=True,
+            )
+        finally:
+            answer_service.build_llm_answer = original_llm
+
+        self.assertEqual(payload.get("answer_mode"), "llm")
+        self.assertGreaterEqual(len(payload.get("sources", [])), 1)
+        first_source = payload["sources"][0]
+        self.assertEqual(
+            first_source.get("url"),
+            "https://courses.cs.washington.edu/courses/cse121/26wi/staff/",
+        )
+        self.assertTrue(any("premium router model" in reason for reason in first_source.get("why", [])))
 
     def test_llm_grounding_and_preferred_conflict_guards(self):
         context = (
@@ -414,6 +558,31 @@ class AnswerLogicTests(unittest.TestCase):
             self.assertEqual(answer_service.preferred_ollama_model(), "custom-model:latest")
         finally:
             answer_service.OLLAMA_MODEL = original_model
+
+    def test_request_ollama_generate_for_role_uses_role_specific_model(self):
+        original_generate = answer_service.request_ollama_generate
+        original_model = answer_service.OLLAMA_MODEL
+        original_router_model = answer_service.OLLAMA_ROUTER_MODEL
+        original_reader_model = answer_service.OLLAMA_READER_MODEL
+        calls = []
+
+        answer_service.OLLAMA_MODEL = "base-model"
+        answer_service.OLLAMA_ROUTER_MODEL = "router-model"
+        answer_service.OLLAMA_READER_MODEL = "reader-model"
+        answer_service.request_ollama_generate = (
+            lambda model, _prompt: calls.append(model) or {"response": "ok"}
+        )
+        try:
+            answer_service.request_ollama_generate_for_role("router", "pick sections")
+            answer_service.request_ollama_generate_for_role("reader", "write answer")
+            answer_service.request_ollama_generate_for_role("other", "fallback")
+        finally:
+            answer_service.request_ollama_generate = original_generate
+            answer_service.OLLAMA_MODEL = original_model
+            answer_service.OLLAMA_ROUTER_MODEL = original_router_model
+            answer_service.OLLAMA_READER_MODEL = original_reader_model
+
+        self.assertEqual(calls, ["router-model", "reader-model", "base-model"])
 
     def test_clarification_detection_and_stitch_heuristic(self):
         self.assertTrue(

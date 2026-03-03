@@ -52,6 +52,19 @@ export OLLAMA_MODEL=llama3.2:3b
 ENABLE_LLM_RESPONSE=1 .venv/bin/python answer_service.py
 ```
 
+Premium mode (`context_mode=full` or `section_map`) now uses two LLM roles:
+
+- Router model: selects the most relevant sections.
+- Reader model: writes the final answer from only those selected sections.
+
+You can set different models per role:
+
+```bash
+export OLLAMA_ROUTER_MODEL=qwen2.5:3b
+export OLLAMA_READER_MODEL=llama3.2:3b
+ENABLE_LLM_RESPONSE=1 .venv/bin/python answer_service.py
+```
+
 Install Ollama: [ollama.com/download](https://ollama.com/download)  
 List installed models: `ollama list`  
 Pull a model: `ollama pull llama3.2:3b`
@@ -104,7 +117,8 @@ Request:
   "session_id": "browser-session-123",
   "debug": false,
   "context_mode": "retrieval",
-  "premium_mode": false
+  "premium_mode": false,
+  "thinking_mode": false
 }
 ```
 
@@ -112,7 +126,8 @@ Optional request fields for LLM context:
 
 - `context_mode`: one of `retrieval`, `full`, `section_map`
 - `premium_mode`: boolean shortcut (`true` forces `full`, `false` forces `retrieval`)
-- Premium behavior (`context_mode=full` or `section_map`): LLM-first answering with polished prose output and no deterministic candidate-answer injection.
+- Premium behavior (`context_mode=full` or `section_map`): two-stage LLM flow (router -> reader), polished prose output, and no deterministic candidate-answer injection.
+- `thinking_mode`: include `llm_trace` in response (prompt + model thinking, when available)
 
 Response shape:
 
@@ -152,6 +167,7 @@ Optional response fields:
 - `query_used`
 - `needs_clarification` (when `answer_mode` is `clarification`)
 - `llm_context_mode` (included when non-default mode is used)
+- `llm_trace` (included when `thinking_mode=true`)
 
 ### `POST /api/session/reset`
 
@@ -184,10 +200,16 @@ Key environment variables:
 | `ENABLE_LLM_RESPONSE` | `1` | Enable/disable LLM rewrite mode |
 | `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Ollama endpoint |
 | `OLLAMA_MODEL` | empty | Optional Ollama model name. If empty, auto-select first installed model |
+| `OLLAMA_ROUTER_MODEL` | empty | Optional premium router model override (section selection) |
+| `OLLAMA_READER_MODEL` | empty | Optional premium reader model override (final answer generation) |
 | `OLLAMA_TAGS_TIMEOUT_SECS` | `3` | Timeout for Ollama model auto-discovery (`/api/tags`) |
 | `LLM_CONTEXT_MODE` | `retrieval` | LLM context strategy: `retrieval`, `full`, or `section_map` |
 | `LLM_FULL_CONTEXT_MAX_CHARS` | `160000` | Character budget when using `full` or `section_map` context |
 | `LLM_SECTION_MAP_EXPANDED_SECTIONS` | `8` | Number of expanded sections in `section_map` mode |
+| `PREMIUM_ROUTER_MAX_CANDIDATES` | `24` | Max candidate sections shown to the premium router model |
+| `PREMIUM_ROUTER_TOP_SOURCES` | `2` | Max section picks requested from the premium router model |
+| `PREMIUM_READER_MAX_CONTEXT_CHARS` | `90000` | Character budget for premium reader context after router selection |
+| `LLM_TRACE_MAX_CHARS` | `120000` | Maximum prompt/thinking text size returned in `llm_trace` |
 | `ENABLE_DENSE_RETRIEVAL` | `0` | Enable dense retrieval in hybrid ranking |
 | `LLM_REQUIRE_VALID_CITATIONS` | `1` | Reject LLM answers with invalid/missing `[source N]` citations |
 | `ENABLE_SESSION_MEMORY` | `1` | Enable multi-turn context memory |
